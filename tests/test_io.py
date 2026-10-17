@@ -112,7 +112,9 @@ class GitHubTest(unittest.TestCase):
         obs = gh.observe()
         self.assertEqual([(r.name, r.online, r.busy) for r in obs.runners], [("host1-a-1", True, True), ("host2-a-1", False, False)])
         # Tik eilėje laukiantys savo runner'io job'ai; GitHub runner'io job'as ne.
-        self.assertEqual(obs.queued, (frozenset({"self-hosted", "home", "npm"}),))
+        self.assertEqual([q.labels for q in obs.queued], [frozenset({"self-hosted", "home", "npm"})])
+        self.assertEqual({q.source for q in obs.queued} | {r.source for r in obs.runners}, {"repos/o/r"})
+        self.assertTrue(obs.complete)
 
     def test_etag_is_sent_and_304_reuses_the_body(self):
         fake = FakeGitHub(ROUTES)
@@ -142,19 +144,84 @@ class ConfigTest(unittest.TestCase):
         for m in machines:
             actions.magic_packet(m.mac)
 
-    def test_last_online_round_trip(self):
+    def test_state_round_trip_keeps_both_fields(self):
+        from rackctl.decide import MachineState
+
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "sub" / "state.json")
             when = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
-            main.save_last_online(path, {"host1": when})
-            self.assertEqual(main.load_last_online(path), {"host1": when})
+            s = MachineState(last_online=when, hold_until=when)
+            main.save_state(path, main.snapshot({"host1": s, "host2": MachineState()}))
+            self.assertEqual(main.load_state(path), {"host1": {"last_online": when, "hold_until": when}})
 
-    def test_missing_or_broken_state_is_empty(self):
+    def test_bad_state_files_are_ignored_not_fatal(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(main.load_last_online(str(Path(d) / "none.json")), {})
-            broken = Path(d) / "b.json"
-            broken.write_text("{")
-            self.assertEqual(main.load_last_online(str(broken)), {})
+            self.assertEqual(main.load_state(str(Path(d) / "none.json")), {})
+            for text in ("{", "[]", '{"host1": "2026-10-17"}', '{"host1": {"last_online": "vakar"}}'):
+                f = Path(d) / "b.json"
+                f.write_text(text)
+                self.assertEqual(main.load_state(str(f)), {} if text in ("{", "[]", '{"host1": "2026-10-17"}') else {"host1": {}})
+
+    def test_naive_time_in_state_is_read_as_utc(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "s.json"
+            f.write_text('{"host1": {"last_online": "2026-10-17T12:00:00"}}')
+            got = main.load_state(str(f))["host1"]["last_online"]
+            self.assertEqual(got, datetime(2026, 10, 17, 12, tzinfo=timezone.utc))
+
+
+class GitHubResilienceTest(unittest.TestCase):
+    def test_one_broken_source_does_not_blind_the_other(self):
+        class Broken(FakeGitHub):
+            def __call__(self, req, timeout):
+                if "orgs/bad" in req.full_url:
+                    raise urllib.error.HTTPError(req.full_url, 401, "Bad credentials", {}, None)
+                return super().__call__(req, timeout)
+
+        gh = github.GitHub(
+            [github.Source("repos/o/r", ("o/r",), "t"), github.Source("orgs/bad", ("bad/x",), "t2")],
+            opener=Broken(ROUTES),
+        )
+        obs = gh.observe()
+        self.assertFalse(obs.complete)
+        self.assertEqual(len(obs.runners), 2)
+        self.assertEqual(len(obs.queued), 1)
+        self.assertIn("401", gh.errors["orgs/bad"])
+
+    def test_in_progress_jobs_are_not_refetched_every_poll(self):
+        routes = dict(ROUTES)
+        routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
+        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7}]}, None)
+        fake = FakeGitHub(routes)
+        now = [datetime(2026, 10, 17, 12, tzinfo=timezone.utc)]
+        gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake, clock=lambda: now[0])
+
+        def job_calls():
+            return sum(1 for url, _ in fake.seen if "/runs/7/jobs" in url)
+
+        gh.observe()
+        gh.observe()
+        self.assertEqual(job_calls(), 1)
+        self.assertEqual(len(gh.observe().queued), 1)  # atsakymas imamas iš atminties
+        now[0] = now[0] + github.IN_PROGRESS_REFRESH
+        gh.observe()
+        self.assertEqual(job_calls(), 2)
+
+    def test_low_rate_limit_asks_to_wait_until_reset(self):
+        class Limited(FakeGitHub):
+            def __call__(self, req, timeout):
+                resp = super().__call__(req, timeout)
+                resp.headers = dict(resp.headers, **{"X-RateLimit-Remaining": "42", "X-RateLimit-Reset": "1792000000"})
+                return resp
+
+        gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=Limited(ROUTES))
+        gh.observe()
+        self.assertEqual(gh.remaining["repos/o/r"], 42)
+        self.assertEqual(gh.backoff_until(), datetime.fromtimestamp(1792000000, timezone.utc))
+
+    def test_created_at_is_parsed(self):
+        self.assertEqual(github.parse_time("2026-10-17T10:15:34Z"), datetime(2026, 10, 17, 10, 15, 34, tzinfo=timezone.utc))
+        self.assertIsNone(github.parse_time("vakar"))
 
 
 if __name__ == "__main__":

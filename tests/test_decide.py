@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from rackctl.decide import Controller, Machine, MachineState, Observation, Runner
+from rackctl.decide import Controller, Machine, Observation, QueuedJob, Runner, Settings
 
 T0 = datetime(2026, 10, 17, 12, 0, 0)
 MIN = timedelta(minutes=1)
@@ -32,8 +32,9 @@ def runners(n, labels, count, online, busy=0):
     ]
 
 
-def obs(rs, queued=()):
-    return Observation(runners=tuple(rs), queued=tuple(queued))
+def obs(rs, queued=(), complete=True):
+    jobs = tuple(q if isinstance(q, QueuedJob) else QueuedJob(labels=q) for q in queued)
+    return Observation(runners=tuple(rs), queued=jobs, complete=complete)
 
 
 def kinds(actions):
@@ -48,14 +49,14 @@ class Fleet:
         for s in self.ctl.state.values():
             s.last_online = T0  # savaitinis pažadinimas netrukdo testams
 
-    def view(self, awake=(), busy=None, queued=()):
+    def view(self, awake=(), busy=None, queued=(), complete=True):
         busy = busy or {}
         rs = []
         rs += runners(1, LIGHT, 4, 1 in awake, busy.get(1, 0))
         rs += runners(4, LIGHT, 4, 4 in awake, busy.get(4, 0))
         rs += runners(5, LIGHT, 3, 5 in awake, busy.get(5, 0))
         rs += runners(2, NPM, 4, 2 in awake, busy.get(2, 0))
-        return obs(rs, queued)
+        return obs(rs, queued, complete)
 
 
 class WakeTest(unittest.TestCase):
@@ -141,11 +142,12 @@ class SleepTest(unittest.TestCase):
         self.assertNotIn(("sleep", "host1"), got)
 
     def test_sleep_is_not_resent_every_poll(self):
+        # GitHub dar kurį laiką rodo užmigusios mašinos runner'ius prisijungusius.
         f = Fleet()
         f.ctl.step(f.view(awake=(1,)), T0)
         f.ctl.step(f.view(awake=(1,)), T0 + 30 * MIN)
-        self.assertEqual(f.ctl.step(f.view(awake=(1,)), T0 + 31 * MIN), [])
-        self.assertEqual(kinds(f.ctl.step(f.view(awake=(1,)), T0 + 35 * MIN)), [("sleep", "host1")])
+        self.assertEqual(f.ctl.step(f.view(awake=(1,)), T0 + 35 * MIN), [])
+        self.assertEqual(kinds(f.ctl.step(f.view(awake=(1,)), T0 + 40 * MIN)), [("sleep", "host1")])
 
     def test_cpp_runner_on_the_same_machine_keeps_it_awake(self):
         ctl = Controller(machines=(machine(1),))
@@ -174,6 +176,91 @@ class WeeklyTest(unittest.TestCase):
         asleep = obs(runners(1, LIGHT, 4, False))
         self.assertEqual(kinds(ctl.step(asleep, T0)), [("wake", "host1")])
         self.assertEqual(ctl.step(asleep, T0 + MIN), [])
+
+
+class ReviewFindingsTest(unittest.TestCase):
+    """Peržiūros (2026-10-17) radiniai, po vieną testą kiekvienam."""
+
+    def test_job_needing_a_label_no_runner_has_wakes_nothing_and_keeps_nothing_awake(self):
+        f = Fleet()
+        gpu = frozenset({"self-hosted", "home", "light", "gpu"})
+        self.assertEqual(f.ctl.step(f.view(queued=[gpu]), T0), [])
+        f.ctl.step(f.view(awake=(1,)), T0)
+        got = kinds(f.ctl.step(f.view(awake=(1,), queued=[gpu]), T0 + 30 * MIN))
+        self.assertEqual(got, [("sleep", "host1")])
+
+    def test_runner_of_another_project_does_not_cover_the_queue(self):
+        ctl = Controller(machines=(machine(1), machine(2)))
+        for s in ctl.state.values():
+            s.last_online = T0
+        rs = [Runner("host1-a-1", True, False, LIGHT, source="a")] + [
+            Runner(f"host2-a-{i}", False, False, LIGHT, source="b") for i in range(1, 3)
+        ]
+        job = QueuedJob(labels=Q_LIGHT, source="b")
+        self.assertEqual(kinds(ctl.step(obs(rs, [job]), T0)), [("wake", "host2")])
+
+    def test_incomplete_observation_wakes_but_never_sleeps(self):
+        f = Fleet()
+        f.ctl.step(f.view(awake=(1,)), T0)
+        self.assertEqual(f.ctl.step(f.view(awake=(1,), complete=False), T0 + 60 * MIN), [])
+        got = kinds(f.ctl.step(f.view(queued=[Q_NPM], complete=False), T0 + 61 * MIN))
+        self.assertIn(("wake", "host2"), got)
+
+    def test_stale_queued_job_does_not_keep_the_machine_awake(self):
+        f = Fleet()
+        f.ctl.step(f.view(awake=(1,)), T0)
+        stale = QueuedJob(labels=Q_LIGHT, since=T0 - 60 * MIN)
+        got = kinds(f.ctl.step(f.view(awake=(1,), queued=[stale]), T0 + 30 * MIN))
+        self.assertIn(("sleep", "host1"), got)
+
+    def test_machine_just_put_to_sleep_is_not_counted_as_free(self):
+        ctl = Controller(machines=(machine(1),))
+        ctl.state["host1"].last_online = T0
+        awake = obs(runners(1, LIGHT, 4, True))
+        ctl.step(awake, T0)
+        self.assertEqual(kinds(ctl.step(awake, T0 + 30 * MIN)), [("sleep", "host1")])
+        # Runner'iai dar „online“, bet mašina jau užmiga: job'as turi ją pažadinti.
+        got = kinds(ctl.step(obs(runners(1, LIGHT, 4, True), [Q_LIGHT]), T0 + 31 * MIN))
+        self.assertEqual(got, [("wake", "host1")])
+
+    def test_old_wake_is_forgotten_once_awake(self):
+        f = Fleet()
+        f.ctl.step(f.view(queued=[Q_NPM]), T0)
+        f.ctl.step(f.view(awake=(2,)), T0 + MIN)
+        f.ctl.step(f.view(awake=(2,), busy={2: 1}), T0 + 10 * MIN)
+        f.ctl.step(f.view(awake=(2,)), T0 + 50 * MIN)  # užmigdoma
+        # Užmigo: jokio „pakartotinio“ pažadinimo be priežasties.
+        self.assertEqual(f.ctl.step(f.view(), T0 + 60 * MIN), [])
+
+    def test_wake_sent_to_an_awake_machine_is_forgotten(self):
+        # Pažadinimas išsiųstas, kol mašina dar buvo „užmigdoma“, bet ji neužmigo ir dirbo.
+        ctl = Controller(machines=(machine(1),))
+        ctl.state["host1"].last_online = T0
+        awake = obs(runners(1, LIGHT, 4, True))
+        ctl.step(awake, T0)
+        ctl.step(awake, T0 + 30 * MIN)  # užmigdoma
+        ctl.step(obs(runners(1, LIGHT, 4, True), [Q_LIGHT]), T0 + 31 * MIN)  # pažadinama
+        ctl.step(obs(runners(1, LIGHT, 4, True, busy=1)), T0 + 40 * MIN)
+        # Po valandos mašina dingsta pati (perkrovimas), be valdiklio užmigdymo:
+        # senas pažadinimas neturi sukelti „pakartotinio“.
+        self.assertEqual(ctl.step(obs(runners(1, LIGHT, 4, False)), T0 + 100 * MIN), [])
+
+    def test_dry_run_never_retries_or_alerts(self):
+        f = Fleet()
+        f.ctl.dry_run = True
+        f.ctl.step(f.view(queued=[Q_NPM]), T0)
+        self.assertEqual(f.ctl.step(f.view(queued=[Q_NPM]), T0 + 3 * MIN), [])
+        self.assertEqual(f.ctl.step(f.view(queued=[Q_NPM]), T0 + 6 * MIN), [])
+
+    def test_dead_machine_alerts_once_per_quiet_period(self):
+        ctl = Controller(machines=(machine(1),))
+        asleep = obs(runners(1, LIGHT, 4, False))
+        alerts = 0
+        t = T0
+        for _ in range(int(5 * 60 / 1)):  # 5 val. kas minutę
+            alerts += sum(1 for a in ctl.step(asleep, t) if a.kind == "alert")
+            t += MIN
+        self.assertEqual(alerts, 1)
 
 
 if __name__ == "__main__":

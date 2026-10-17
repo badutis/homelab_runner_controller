@@ -12,11 +12,11 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from . import actions as act
-from .decide import Action, Controller, Machine, Settings
-from .github import GitHub, Source, first_error, read_token
+from .decide import Action, Controller, Machine, MachineState, Observation, Settings
+from .github import GitHub, Source, read_token
 
 log = logging.getLogger("rackctl")
 
@@ -55,24 +55,56 @@ def sources_from(cfg: dict) -> List[Source]:
     ]
 
 
-# --- paskutinio prisijungimo laikas diske --------------------------------------------
-# Rašoma tik kai pasikeičia diena, todėl SD kortelei tai keli įrašai per dieną.
+# --- būsena diske ---------------------------------------------------------------------
+# Tik tai, ko negalima sužinoti iš GitHub: kada mašina paskutinį kartą buvo prisijungusi
+# (14 dienų taisyklė) ir iki kada laikoma pabudusi po savaitinio pažadinimo. Rašoma tik
+# pasikeitus, todėl SD kortelei tai keli įrašai per dieną.
+
+PERSISTED = ("last_online", "hold_until")
 
 
-def load_last_online(path: str) -> Dict[str, datetime]:
+def _aware(value: object) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    try:
+        when = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
+    """Sugadintas ar svetimos formos failas — tas pats, kas jokio failo."""
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
     except (OSError, ValueError):
         return {}
-    return {k: datetime.fromisoformat(v) for k, v in raw.items()}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Dict[str, datetime]] = {}
+    for name, fields in raw.items():
+        if not isinstance(fields, dict):
+            continue
+        parsed = {k: _aware(fields.get(k)) for k in PERSISTED}
+        out[name] = {k: v for k, v in parsed.items() if v is not None}
+    return out
 
 
-def save_last_online(path: str, values: Dict[str, datetime]) -> None:
+def snapshot(state: Dict[str, MachineState]) -> Dict[str, Dict[str, str]]:
+    out: Dict[str, Dict[str, str]] = {}
+    for name, s in state.items():
+        fields = {k: getattr(s, k).isoformat() for k in PERSISTED if getattr(s, k) is not None}
+        if fields:
+            out[name] = fields
+    return out
+
+
+def save_state(path: str, data: Dict[str, Dict[str, str]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({k: v.isoformat() for k, v in values.items()}, f)
+        json.dump(data, f)
     os.replace(tmp, path)
 
 
@@ -84,7 +116,15 @@ class Metrics:
         self.lock = threading.Lock()
         self.text = ""
 
-    def update(self, ctl: Controller, counters: Dict[str, int], ok: bool, dry_run: bool) -> None:
+    def update(
+        self,
+        ctl: Controller,
+        counters: Dict[str, int],
+        gh: "GitHub",
+        busy_seconds: Dict[str, float],
+        obs: Optional[Observation],
+        dry_run: bool,
+    ) -> None:
         lines = [
             "# HELP rackctl_machine_awake 1 when at least one runner of the machine is online.",
             "# TYPE rackctl_machine_awake gauge",
@@ -99,11 +139,26 @@ class Metrics:
             kind, machine = key.split("/", 1)
             lines.append(f'rackctl_actions_total{{kind="{kind}",machine="{machine}"}} {value}')
         lines += [
-            "# TYPE rackctl_github_ok gauge",
-            f"rackctl_github_ok {int(ok)}",
-            "# TYPE rackctl_dry_run gauge",
-            f"rackctl_dry_run {int(dry_run)}",
+            "# HELP rackctl_runner_busy_seconds_total Seconds the runner was seen busy (20 s polls).",
+            "# TYPE rackctl_runner_busy_seconds_total counter",
         ]
+        for name, secs in sorted(busy_seconds.items()):
+            lines.append(f'rackctl_runner_busy_seconds_total{{runner="{name}"}} {secs:.0f}')
+        lines += ["# TYPE rackctl_queued_jobs gauge"]
+        queued: Dict[str, int] = {}
+        for job in obs.queued if obs else ():
+            key = ",".join(sorted(job.labels - {"self-hosted"}))
+            queued[key] = queued.get(key, 0) + 1
+        for key, n in sorted(queued.items()):
+            lines.append(f'rackctl_queued_jobs{{labels="{key}"}} {n}')
+        lines += ["# TYPE rackctl_github_ok gauge"]
+        for src in gh.sources:
+            ok = int(src.runners_path not in gh.errors)
+            lines.append(f'rackctl_github_ok{{source="{src.runners_path}"}} {ok}')
+        lines += ["# TYPE rackctl_github_remaining gauge"]
+        for source, rem in sorted(gh.remaining.items()):
+            lines.append(f'rackctl_github_remaining{{source="{source}"}} {rem}')
+        lines += ["# TYPE rackctl_dry_run gauge", f"rackctl_dry_run {int(dry_run)}"]
         with self.lock:
             self.text = "\n".join(lines) + "\n"
 
@@ -147,47 +202,72 @@ def execute(a: Action, by_name: Dict[str, Machine], cfg: dict) -> str:
 def run(cfg: dict) -> None:
     machines = machines_from(cfg)
     by_name = {m.name: m for m in machines}
-    ctl = Controller(machines=machines, settings=Settings(idle=timedelta(minutes=cfg["idle_minutes"])))
-    saved = load_last_online(cfg["state_file"])
-    for name, when in saved.items():
+    dry_run = bool(cfg["dry_run"])
+    settings = Settings(idle=timedelta(minutes=cfg["idle_minutes"]))
+    if dry_run:
+        # Stebėjimo režime mašina neužmiega, todėl tas pats „migdyčiau“ kartotųsi dažnai.
+        settings = Settings(idle=settings.idle, sleep_retry=timedelta(hours=1))
+    ctl = Controller(machines=machines, settings=settings, dry_run=dry_run)
+    for name, fields in load_state(cfg["state_file"]).items():
         if name in ctl.state:
-            ctl.state[name].last_online = when
+            for key, value in fields.items():
+                setattr(ctl.state[name], key, value)
     gh = GitHub(sources_from(cfg))
     metrics = Metrics()
     metrics.serve(cfg["metrics_listen"])
     counters: Dict[str, int] = {}
-    saved_days = {k: v.date() for k, v in saved.items()}
-    log.info("pradėta: %d mašinos, dry_run=%s", len(machines), cfg["dry_run"])
+    busy_seconds: Dict[str, float] = {}
+    saved = snapshot(ctl.state)
+    last_poll: Optional[datetime] = None
+    obs: Optional[Observation] = None
+    log.info("pradėta: %d mašinos, dry_run=%s", len(machines), dry_run)
 
     while True:
         now = datetime.now(timezone.utc)
-        ok = True
         try:
-            obs = gh.observe()
-        except Exception as e:  # noqa: BLE001 — tinklas ar GitHub; bandoma kitame cikle
-            ok = False
-            log.warning("GitHub neatsakė: %s", first_error(e) or repr(e))
-        if ok:
-            for a in ctl.step(obs, now):
-                key = f"{a.kind}/{a.machine}"
-                counters[key] = counters.get(key, 0) + 1
-                if cfg["dry_run"] and a.kind != "alert":
-                    log.info("[dry-run] %s %s: %s", a.kind, a.machine, a.reason)
-                    continue
-                try:
-                    result = execute(a, by_name, cfg)
-                except Exception as e:  # noqa: BLE001 — vienos mašinos klaida nestabdo kitų
-                    result = f"klaida: {e!r}"
-                log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
-            days = {n: s.last_online.date() for n, s in ctl.state.items() if s.last_online}
-            if days != saved_days:
-                save_last_online(
-                    cfg["state_file"],
-                    {n: s.last_online for n, s in ctl.state.items() if s.last_online},
-                )
-                saved_days = days
-        metrics.update(ctl, counters, ok, cfg["dry_run"])
+            pause = gh.backoff_until()
+            if pause is not None and pause > now:
+                log.warning("GitHub limitas beveik baigėsi; laukiama iki %s", pause.isoformat())
+            else:
+                obs = gh.observe()
+                for source, err in gh.errors.items():
+                    log.warning("šaltinis %s neperskaitytas: %s", source, err)
+                if last_poll is not None:
+                    elapsed = min((now - last_poll).total_seconds(), 2 * cfg["poll_seconds"])
+                    for r in obs.runners:
+                        if r.busy:
+                            busy_seconds[r.name] = busy_seconds.get(r.name, 0.0) + elapsed
+                last_poll = now
+                for a in ctl.step(obs, now):
+                    key = f"{a.kind}/{a.machine}"
+                    counters[key] = counters.get(key, 0) + 1
+                    if dry_run and a.kind != "alert":
+                        log.info("[dry-run] %s %s: %s", a.kind, a.machine, a.reason)
+                        continue
+                    try:
+                        result = execute(a, by_name, cfg)
+                    except Exception as e:  # noqa: BLE001 — vienos mašinos klaida nestabdo kitų
+                        result = f"klaida: {e!r}"
+                    log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
+                current = snapshot(ctl.state)
+                if _days(current) != _days(saved) or _holds(current) != _holds(saved):
+                    save_state(cfg["state_file"], current)
+                    saved = current
+        except Exception:  # noqa: BLE001 — ciklas nekrenta: kitas bandymas po poll_seconds
+            log.exception("ciklo klaida")
+        try:
+            metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run)
+        except Exception:  # noqa: BLE001
+            log.exception("metrikų klaida")
         time.sleep(cfg["poll_seconds"])
+
+
+def _days(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    return {k: v.get("last_online", "")[:10] for k, v in data.items()}
+
+
+def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    return {k: v.get("hold_until", "") for k, v in data.items()}
 
 
 def main(argv: List[str]) -> int:

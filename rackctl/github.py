@@ -1,18 +1,32 @@
 """GitHub API skaitymas: runner'iai ir job'ai eilėje. Tik GET, tik išeinantys ryšiai.
 
-Kiekvienas atsakymas saugomas su ETag: pakartotinė užklausa su `If-None-Match` grąžina
-304 ir neskaičiuojama į GitHub užklausų limitą, todėl kas 20 s klausti galima.
+Užklausų limitas (5 000 per valandą vienam raktui) saugomas trimis būdais:
+
+- kiekvienas atsakymas saugomas su ETag; nepasikeitęs grąžina 304, kuris į limitą
+  neskaičiuojamas;
+- vykstančio paleidimo (`in_progress`) job'ai perklausiami ne kas ciklą, o kas
+  `IN_PROGRESS_REFRESH` (jo atsakymas kinta nuolat, todėl ETag ten nepadeda), o kai
+  likutis mažas — kas `IN_PROGRESS_REFRESH_LOW`;
+- kai likutis beveik baigėsi, `backoff_until` pasako ciklui palaukti iki atstatymo.
+
+Kiekvienas šaltinis skaitomas atskirai: vieno klaida (pasibaigęs raktas) neaklina kito,
+bet stebėjimas pažymimas nepilnu, ir tada niekas nemigdoma (decide.py).
 """
 
 import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 
-from .decide import Observation, Runner
+from .decide import Observation, QueuedJob, Runner
 
 API = "https://api.github.com"
+IN_PROGRESS_REFRESH = timedelta(seconds=60)
+IN_PROGRESS_REFRESH_LOW = timedelta(minutes=5)
+LOW_REMAINING = 1000
+STOP_REMAINING = 100
 
 
 @dataclass(frozen=True)
@@ -24,18 +38,46 @@ class Source:
     token: str
 
 
+def parse_time(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 class GitHub:
-    def __init__(self, sources: List[Source], opener=None):
+    def __init__(self, sources: List[Source], opener=None, clock=None):
         self.sources = sources
         self._open = opener or urllib.request.urlopen
+        self._now = clock or (lambda: datetime.now(timezone.utc))
         self._cache: Dict[str, Tuple[str, object]] = {}
         self._touched: set = set()
+        # paleidimo jobs URL -> (kada perklausta, job'ai eilėje)
+        self._run_jobs: Dict[str, Tuple[datetime, List[QueuedJob]]] = {}
+        self._kept: set = set()
+        self.remaining: Dict[str, int] = {}  # šaltinis -> likęs limitas
+        self.reset_at: Dict[str, datetime] = {}
+        self.errors: Dict[str, str] = {}  # šaltinis -> paskutinė klaida
 
-    def _get(self, path: str, token: str) -> object:
+    # --- užklausos ---------------------------------------------------------------------
+
+    def _note_limit(self, source: str, headers) -> None:
+        if headers is None:
+            return
+        rem = headers.get("X-RateLimit-Remaining")
+        reset = headers.get("X-RateLimit-Reset")
+        if rem is not None and str(rem).isdigit():
+            self.remaining[source] = int(rem)
+        if reset is not None and str(reset).isdigit():
+            self.reset_at[source] = datetime.fromtimestamp(int(reset), timezone.utc)
+
+    def _get(self, path: str, src: Source) -> object:
         url = f"{API}/{path}"
         req = urllib.request.Request(url)
         req.add_header("Accept", "application/vnd.github+json")
-        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Authorization", f"Bearer {src.token}")
         req.add_header("X-GitHub-Api-Version", "2022-11-28")
         self._touched.add(url)
         cached = self._cache.get(url)
@@ -43,60 +85,100 @@ class GitHub:
             req.add_header("If-None-Match", cached[0])
         try:
             with self._open(req, timeout=15) as resp:
+                self._note_limit(src.runners_path, resp.headers)
                 body = json.loads(resp.read().decode("utf-8"))
                 etag = resp.headers.get("ETag")
                 if etag:
                     self._cache[url] = (etag, body)
                 return body
         except urllib.error.HTTPError as e:
+            self._note_limit(src.runners_path, e.headers)
             if e.code == 304 and cached:
                 return cached[1]
             raise
 
-    def _pages(self, path: str, key: str, token: str) -> List[dict]:
+    def _pages(self, path: str, key: str, src: Source) -> List[dict]:
         out: List[dict] = []
         page = 1
         while True:
             sep = "&" if "?" in path else "?"
-            body = self._get(f"{path}{sep}per_page=100&page={page}", token)
+            body = self._get(f"{path}{sep}per_page=100&page={page}", src)
             items = body.get(key, []) if isinstance(body, dict) else []
             out.extend(items)
             if len(items) < 100:
                 return out
             page += 1
 
+    # --- stebėjimas --------------------------------------------------------------------
+
+    def backoff_until(self) -> Optional[datetime]:
+        """Iki kada nebeklausti: kai kurio šaltinio limitas beveik baigėsi."""
+        latest = None
+        for source, rem in self.remaining.items():
+            if rem < STOP_REMAINING and source in self.reset_at:
+                if latest is None or self.reset_at[source] > latest:
+                    latest = self.reset_at[source]
+        return latest
+
     def observe(self) -> Observation:
         self._touched = set()
+        self._kept = set()
         runners: List[Runner] = []
-        queued: List[FrozenSet[str]] = []
+        queued: List[QueuedJob] = []
+        complete = True
         for src in self.sources:
-            for r in self._pages(f"{src.runners_path}/actions/runners", "runners", src.token):
-                runners.append(
+            try:
+                got_runners = [
                     Runner(
                         name=r["name"],
                         online=r.get("status") == "online",
                         busy=bool(r.get("busy")),
                         labels=frozenset(l["name"] for l in r.get("labels", [])),
+                        source=src.runners_path,
                     )
-                )
-            for repo in src.repos:
-                queued.extend(self._queued_jobs(repo, src.token))
+                    for r in self._pages(f"{src.runners_path}/actions/runners", "runners", src)
+                ]
+                got_jobs: List[QueuedJob] = []
+                for repo in src.repos:
+                    got_jobs.extend(self._queued_jobs(repo, src))
+            except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+                complete = False
+                self.errors[src.runners_path] = first_error(e) or repr(e)
+                continue
+            self.errors.pop(src.runners_path, None)
+            runners.extend(got_runners)
+            queued.extend(got_jobs)
         # Baigtų paleidimų atsakymų nebeprireiks; be šito atmintis augtų be ribos.
         self._cache = {k: v for k, v in self._cache.items() if k in self._touched}
-        return Observation(runners=tuple(runners), queued=tuple(queued))
+        self._run_jobs = {k: v for k, v in self._run_jobs.items() if k in self._kept}
+        return Observation(runners=tuple(runners), queued=tuple(queued), complete=complete)
 
-    def _queued_jobs(self, repo: str, token: str) -> List[FrozenSet[str]]:
-        out: List[FrozenSet[str]] = []
+    def _queued_jobs(self, repo: str, src: Source) -> List[QueuedJob]:
+        out: List[QueuedJob] = []
+        now = self._now()
+        low = self.remaining.get(src.runners_path, LOW_REMAINING) < LOW_REMAINING
+        refresh = IN_PROGRESS_REFRESH_LOW if low else IN_PROGRESS_REFRESH
         # Darbas eilėje gali būti ir dar nepradėtame (`queued`), ir jau vykstančiame
         # (`in_progress`) paleidime, kai dalis jo job'ų jau gavo runner'į.
         for status in ("queued", "in_progress"):
-            runs = self._pages(f"repos/{repo}/actions/runs?status={status}", "workflow_runs", token)
+            runs = self._pages(f"repos/{repo}/actions/runs?status={status}", "workflow_runs", src)
             for run in runs:
-                jobs = self._pages(f"repos/{repo}/actions/runs/{run['id']}/jobs", "jobs", token)
-                for job in jobs:
+                path = f"repos/{repo}/actions/runs/{run['id']}/jobs"
+                seen = self._run_jobs.get(path)
+                if status == "in_progress" and seen and now - seen[0] < refresh:
+                    self._kept.add(path)
+                    out.extend(seen[1])
+                    continue
+                jobs = []
+                for job in self._pages(path, "jobs", src):
                     labels = frozenset(l.lower() for l in job.get("labels", []))
                     if job.get("status") == "queued" and "self-hosted" in labels:
-                        out.append(labels)
+                        jobs.append(
+                            QueuedJob(labels=labels, since=parse_time(job.get("created_at")), source=src.runners_path)
+                        )
+                self._run_jobs[path] = (now, jobs)
+                self._kept.add(path)
+                out.extend(jobs)
         return out
 
 

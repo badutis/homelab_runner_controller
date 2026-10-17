@@ -47,9 +47,20 @@ touch "$AUTH"
 chown "$USER_NAME:$USER_NAME" "$AUTH"
 chmod 0600 "$AUTH"
 KEY="$(awk '{print $1" "$2}' "$PUBKEY")"
-if ! grep -qF "$KEY" "$AUTH"; then
-  echo "command=\"sudo -n /usr/local/sbin/rack-sleep\",restrict $KEY rackctl" >> "$AUTH"
+WANT="command=\"sudo -n /usr/local/sbin/rack-sleep\",restrict $KEY rackctl"
+# Bet kuri kita eilutė su tuo pačiu raktu (pvz. įrašyta ranka bandant, be apribojimo)
+# pašalinama: šis raktas niekada neturi duoti pilno shell'o.
+FILTERED="$(mktemp)"
+grep -vF "$KEY" "$AUTH" > "$FILTERED" || true
+# Paskutinė eilutė be naujos eilutės simbolio prilipdytų mūsų eilutę prie svetimo rakto.
+if [ -s "$FILTERED" ] && [ -n "$(tail -c1 "$FILTERED")" ]; then
+  echo >> "$FILTERED"
 fi
+echo "$WANT" >> "$FILTERED"
+if ! cmp -s "$FILTERED" "$AUTH"; then
+  cat "$FILTERED" > "$AUTH"
+fi
+rm -f "$FILTERED"
 
 # 4. Wake-on-LAN kiekvieno paleidimo metu (nustatymas po perkrovimo dingsta).
 command -v ethtool >/dev/null || apt-get install -y -q ethtool
@@ -67,6 +78,6 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now "wol@$IFACE.service" >/dev/null
-ethtool "$IFACE" | grep -q 'Wake-on: g' || die "Wake-on-LAN neįsijungė ($IFACE)"
+ethtool "$IFACE" | grep -qE '^[[:space:]]*Wake-on:[[:space:]]*g$' || die "Wake-on-LAN neįsijungė ($IFACE)"
 
 echo "paruošta: $USER_NAME, $IFACE (Wake-on: g)"
