@@ -191,7 +191,7 @@ class GitHubResilienceTest(unittest.TestCase):
     def test_in_progress_jobs_are_not_refetched_every_poll(self):
         routes = dict(ROUTES)
         routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
-        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7}]}, None)
+        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t1"}]}, None)
         fake = FakeGitHub(routes)
         now = [datetime(2026, 10, 17, 12, tzinfo=timezone.utc)]
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake, clock=lambda: now[0])
@@ -206,6 +206,30 @@ class GitHubResilienceTest(unittest.TestCase):
         now[0] = now[0] + github.IN_PROGRESS_REFRESH
         gh.observe()
         self.assertEqual(job_calls(), 2)
+
+    def test_job_taken_after_the_run_started_is_not_reported_from_cache(self):
+        routes = dict(ROUTES)
+        routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": [{"id": 7, "updated_at": "t1"}]}, None)
+        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": []}, None)
+        fake = FakeGitHub(routes)
+        gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake)
+        self.assertEqual(len(gh.observe().queued), 1)
+        # Runner'is paėmė job'ą: paleidimas dabar in_progress, job'ų sąrašas pasikeitė.
+        fake.routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
+        fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
+        fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": [{"status": "in_progress", "labels": ["self-hosted", "home", "npm"]}]}, None)
+        self.assertEqual(gh.observe().queued, ())
+
+    def test_changed_in_progress_run_is_refetched(self):
+        routes = dict(ROUTES)
+        routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
+        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t1"}]}, None)
+        fake = FakeGitHub(routes)
+        gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake)
+        self.assertEqual(len(gh.observe().queued), 1)
+        fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
+        fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": []}, None)
+        self.assertEqual(gh.observe().queued, ())
 
     def test_low_rate_limit_asks_to_wait_until_reset(self):
         class Limited(FakeGitHub):

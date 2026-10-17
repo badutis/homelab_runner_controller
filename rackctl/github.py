@@ -54,8 +54,8 @@ class GitHub:
         self._now = clock or (lambda: datetime.now(timezone.utc))
         self._cache: Dict[str, Tuple[str, object]] = {}
         self._touched: set = set()
-        # paleidimo jobs URL -> (kada perklausta, job'ai eilėje)
-        self._run_jobs: Dict[str, Tuple[datetime, List[QueuedJob]]] = {}
+        # paleidimo jobs URL -> (kada perklausta, paleidimo updated_at, job'ai eilėje)
+        self._run_jobs: Dict[str, Tuple[datetime, str, List[QueuedJob]]] = {}
         self._kept: set = set()
         self.remaining: Dict[str, int] = {}  # šaltinis -> likęs limitas
         self.reset_at: Dict[str, datetime] = {}
@@ -141,7 +141,7 @@ class GitHub:
                 got_jobs: List[QueuedJob] = []
                 for repo in src.repos:
                     got_jobs.extend(self._queued_jobs(repo, src))
-            except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            except Exception as e:  # noqa: BLE001 — bet kokia vieno šaltinio klaida lieka jame
                 complete = False
                 self.errors[src.runners_path] = first_error(e) or repr(e)
                 continue
@@ -165,9 +165,13 @@ class GitHub:
             for run in runs:
                 path = f"repos/{repo}/actions/runs/{run['id']}/jobs"
                 seen = self._run_jobs.get(path)
-                if status == "in_progress" and seen and now - seen[0] < refresh:
+                updated = str(run.get("updated_at") or "")
+                # Senu sąrašu galima remtis tik tada, kai paleidimas nuo tada nepasikeitė:
+                # kitaip job'as, kurį runner'is ką tik paėmė, atrodytų vis dar laukiantis, ir
+                # valdiklis be reikalo žadintų kitą mašiną.
+                if status == "in_progress" and seen and seen[1] == updated and now - seen[0] < refresh:
                     self._kept.add(path)
-                    out.extend(seen[1])
+                    out.extend(seen[2])
                     continue
                 jobs = []
                 for job in self._pages(path, "jobs", src):
@@ -176,7 +180,7 @@ class GitHub:
                         jobs.append(
                             QueuedJob(labels=labels, since=parse_time(job.get("created_at")), source=src.runners_path)
                         )
-                self._run_jobs[path] = (now, jobs)
+                self._run_jobs[path] = (now, updated if status == "in_progress" else "", jobs)
                 self._kept.add(path)
                 out.extend(jobs)
         return out

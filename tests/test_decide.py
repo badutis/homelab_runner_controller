@@ -245,6 +245,14 @@ class ReviewFindingsTest(unittest.TestCase):
         # senas pažadinimas neturi sukelti „pakartotinio“.
         self.assertEqual(ctl.step(obs(runners(1, LIGHT, 4, False)), T0 + 100 * MIN), [])
 
+    def test_stuck_job_neither_keeps_awake_nor_wakes_back(self):
+        f = Fleet()
+        stuck = QueuedJob(labels=Q_LIGHT, since=T0 - 60 * MIN)
+        self.assertEqual(f.ctl.step(f.view(queued=[stuck]), T0), [])
+        f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0)
+        self.assertEqual(kinds(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 30 * MIN)), [("sleep", "host1")])
+        self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 31 * MIN), [])
+
     def test_dry_run_never_retries_or_alerts(self):
         f = Fleet()
         f.ctl.dry_run = True

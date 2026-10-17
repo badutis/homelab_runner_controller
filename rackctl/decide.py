@@ -133,6 +133,11 @@ class Controller:
             and now - s.wake_sent < self.settings.wake_timeout
         )
 
+    def _fresh(self, obs: Observation, now: datetime) -> List[QueuedJob]:
+        """Job'ai, kuriuos GitHub dar gali atiduoti: ilgiau laukiantis greičiausiai įstrigo
+        (pvz. runner'ių grupė neleidžia jo repozitorijai) ir mašinų nei žadina, nei laiko."""
+        return [j for j in obs.queued if j.since is None or now - j.since < self.settings.stale_queue]
+
     def _alert(self, s: MachineState, name: str, reason: str, now: datetime, actions: List[Action]) -> None:
         if s.last_alert is None or now - s.last_alert >= self.settings.alert_quiet:
             s.last_alert = now
@@ -205,7 +210,7 @@ class Controller:
 
     def _wake_for_queue(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
         demand: Dict[Tuple[str, FrozenSet[str]], int] = {}
-        for job in obs.queued:
+        for job in self._fresh(obs, now):
             key = (job.source, job.labels)
             demand[key] = demand.get(key, 0) + 1
         for key in sorted(demand, key=lambda k: (k[0], sorted(k[1]))):
@@ -248,9 +253,7 @@ class Controller:
                 s.weekly_pending = True
 
     def _sleep_idle(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
-        fresh = [
-            j for j in obs.queued if j.since is None or now - j.since < self.settings.stale_queue
-        ]
+        fresh = self._fresh(obs, now)
         for m in self.machines:
             s = self.state[m.name]
             if not s.awake:
