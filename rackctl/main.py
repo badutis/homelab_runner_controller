@@ -151,6 +151,18 @@ class Metrics:
             queued[key] = queued.get(key, 0) + 1
         for key, n in sorted(queued.items()):
             lines.append(f'rackctl_queued_jobs{{labels="{key}"}} {n}')
+        # Kiek laukia seniausias eilės job'as: pranešimui „laukia per ilgai“ eilės ilgio
+        # neužtenka — nuolat judanti eilė irgi ne tuščia.
+        lines += ["# TYPE rackctl_queued_oldest_seconds gauge"]
+        oldest: Dict[str, float] = {}
+        now = datetime.now(timezone.utc)
+        for job in obs.queued if obs else ():
+            if job.since is None:
+                continue
+            key = ",".join(sorted(job.labels - {"self-hosted"}))
+            oldest[key] = max(oldest.get(key, 0.0), (now - job.since).total_seconds())
+        for key, secs in sorted(oldest.items()):
+            lines.append(f'rackctl_queued_oldest_seconds{{labels="{key}"}} {secs:.0f}')
         lines += ["# TYPE rackctl_github_ok gauge"]
         for src in gh.sources:
             ok = int(src.runners_path not in gh.errors)

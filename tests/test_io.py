@@ -267,5 +267,29 @@ class GitHubResilienceTest(unittest.TestCase):
         self.assertIsNone(github.parse_time("vakar"))
 
 
+class MetricsTest(unittest.TestCase):
+    def test_oldest_queued_wait_per_labels(self):
+        from datetime import timedelta
+
+        from rackctl.decide import Controller, Observation, QueuedJob
+
+        class G:
+            sources, errors, remaining = [], {}, {}
+
+        now = datetime.now(timezone.utc)
+        q = frozenset({"self-hosted", "home", "npm"})
+        obs = Observation(runners=(), queued=(
+            QueuedJob(labels=q, since=now - timedelta(minutes=7)),
+            QueuedJob(labels=q, since=now - timedelta(minutes=1)),
+            QueuedJob(labels=q),
+        ))
+        m = main.Metrics()
+        m.update(Controller(machines=()), {}, G(), {}, obs, True)
+        line = [l for l in m.text.splitlines() if l.startswith("rackctl_queued_oldest_seconds")]
+        self.assertEqual(len(line), 1)
+        self.assertTrue(415 <= float(line[0].split()[-1]) <= 425, line)
+        self.assertIn('rackctl_queued_jobs{labels="home,npm"} 3', m.text)
+
+
 if __name__ == "__main__":
     unittest.main()
