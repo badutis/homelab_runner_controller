@@ -1,0 +1,69 @@
+{
+  "dry_run": true,
+  "poll_seconds": 20,
+  "idle_minutes": 30,
+  "broadcast": "192.0.2.255",
+  "metrics_listen": "0.0.0.0:9105",
+  "state_file": "/var/lib/rackctl/last-online.json",
+  "ssh_key": "/etc/rackctl/id_ed25519",
+  "known_hosts": "/etc/rackctl/known_hosts",
+  "sources": [
+    {
+      "runners_path": "repos/example-org/app",
+      "repos": [
+        "example-org/app"
+      ],
+      "token_file": "/etc/rackctl/token-a"
+    },
+    {
+      "runners_path": "orgs/example-org2",
+      "repos": [
+        "example-org2/repo-a",
+        "example-org2/repo-b"
+      ],
+      "token_file": "/etc/rackctl/token-b"
+    }
+  ],
+  "machines": [
+    {
+      "name": "host1",
+      "mac": "00:00:5e:00:53:01",
+      "host": "192.0.2.128",
+      "runner_prefixes": [
+        "host1-a-",
+        "host1-b-"
+      ],
+      "rank": 1
+    },
+    {
+      "name": "host2",
+      "mac": "00:00:5e:00:53:02",
+      "host": "192.0.2.140",
+      "runner_prefixes": [
+        "host2-a-",
+        "host2-b-"
+      ],
+      "rank": 1
+    },
+    {
+      "name": "host3",
+      "mac": "00:00:5e:00:53:03",
+      "host": "192.0.2.141",
+      "runner_prefixes": [
+        "host3-a-",
+        "host3-b-"
+      ],
+      "rank": 1
+    },
+    {
+      "name": "host4",
+      "mac": "00:00:5e:00:53:04",
+      "host": "192.0.2.143",
+      "runner_prefixes": [
+        "host4-a-",
+        "host4-b-"
+      ],
+      "rank": 1
+    }
+  ]
+}

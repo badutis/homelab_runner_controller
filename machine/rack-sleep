@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Užmigdo šią mašiną, jei joje nevyksta joks job'as. Paleidžia tik valdiklis (Orange Pi)
+# per SSH raktą, kurį authorized_keys riboja šia viena komanda; sudoers leidžia ją be
+# slaptažodžio. Išėjimo kodai — tools/rack/rackctl/actions.py SLEEP_EXIT.
+set -euo pipefail
+
+# Lemia ši patikra, ne GitHub API: API apie užimtą runner'į praneša pavėluotai.
+if pgrep -f 'Runner.Worker' >/dev/null; then
+  echo "busy: Runner.Worker veikia" >&2
+  exit 3
+fi
+
+# Užmigdymas suplanuojamas po 5 s, kad SSH sesija spėtų baigtis švariai.
+if [ -f /var/run/reboot-required ]; then
+  systemd-run --quiet --on-active=5 /usr/bin/systemctl reboot
+  exit 4
+fi
+systemd-run --quiet --on-active=5 /usr/bin/systemctl suspend
+exit 0
