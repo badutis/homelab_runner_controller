@@ -249,6 +249,10 @@ def run(cfg: dict) -> None:
                     except Exception as e:  # noqa: BLE001 — vienos mašinos klaida nestabdo kitų
                         result = f"klaida: {e!r}"
                     log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
+                    if a.kind == "sleep" and not result.startswith(act.SLEEP_OK):
+                        counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
+                        if ctl.sleep_failed(a.machine, now):
+                            log.error("alert %s: neužmiega jau 3 kartus iš eilės — %s", a.machine, result)
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)

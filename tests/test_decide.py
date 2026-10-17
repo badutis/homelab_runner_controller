@@ -206,13 +206,6 @@ class ReviewFindingsTest(unittest.TestCase):
         got = kinds(f.ctl.step(f.view(queued=[Q_NPM], complete=False), T0 + 61 * MIN))
         self.assertIn(("wake", "host2"), got)
 
-    def test_stale_queued_job_does_not_keep_the_machine_awake(self):
-        f = Fleet()
-        f.ctl.step(f.view(awake=(1,)), T0)
-        stale = QueuedJob(labels=Q_LIGHT, since=T0 - 60 * MIN)
-        got = kinds(f.ctl.step(f.view(awake=(1,), queued=[stale]), T0 + 30 * MIN))
-        self.assertIn(("sleep", "host1"), got)
-
     def test_machine_just_put_to_sleep_is_not_counted_as_free(self):
         ctl = Controller(machines=(machine(1),))
         ctl.state["host1"].last_online = T0
@@ -245,13 +238,48 @@ class ReviewFindingsTest(unittest.TestCase):
         # senas pažadinimas neturi sukelti „pakartotinio“.
         self.assertEqual(ctl.step(obs(runners(1, LIGHT, 4, False)), T0 + 100 * MIN), [])
 
-    def test_stuck_job_neither_keeps_awake_nor_wakes_back(self):
+    def test_job_a_free_runner_ignores_for_30_min_stops_keeping_it_awake(self):
         f = Fleet()
-        stuck = QueuedJob(labels=Q_LIGHT, since=T0 - 60 * MIN)
-        self.assertEqual(f.ctl.step(f.view(queued=[stuck]), T0), [])
+        stuck = QueuedJob(labels=Q_LIGHT, id=1)
         f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0)
+        self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 29 * MIN), [])
         self.assertEqual(kinds(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 30 * MIN)), [("sleep", "host1")])
+        # Ir ką tik užmigdytos mašinos atgal nežadina.
         self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 31 * MIN), [])
+
+    def test_old_job_seen_after_an_outage_still_wakes(self):
+        # Valdiklis neveikė valandą; job'as sukurtas seniai, bet joks runner'is jo negalėjo imti.
+        f = Fleet()
+        old = QueuedJob(labels=Q_NPM, id=2, since=T0 - 60 * MIN)
+        self.assertEqual(kinds(f.ctl.step(f.view(queued=[old]), T0)), [("wake", "host2")])
+
+    def test_failed_wake_is_retried_after_backoff_for_a_waiting_job(self):
+        f = Fleet()
+        job = QueuedJob(labels=Q_NPM, id=3)
+        f.ctl.step(f.view(queued=[job]), T0)
+        f.ctl.step(f.view(queued=[job]), T0 + 3 * MIN)
+        f.ctl.step(f.view(queued=[job]), T0 + 6 * MIN)  # pranešimas, atidėta 30 min
+        self.assertEqual(kinds(f.ctl.step(f.view(queued=[job]), T0 + 37 * MIN)), [("wake", "host2")])
+
+    def test_runners_joining_one_by_one_do_not_wake_a_second_machine(self):
+        ctl = Controller(machines=(machine(1), machine(4)))
+        for s in ctl.state.values():
+            s.last_online = T0
+        jobs = [Q_LIGHT, Q_LIGHT]
+        asleep = runners(1, LIGHT, 2, False) + runners(4, LIGHT, 2, False)
+        self.assertEqual(kinds(ctl.step(obs(asleep, jobs), T0)), [("wake", "host1")])
+        half = [Runner("host1-a-1", True, False, LIGHT), Runner("host1-a-2", False, False, LIGHT)] + runners(4, LIGHT, 2, False)
+        self.assertEqual(ctl.step(obs(half, jobs), T0 + MIN), [])
+
+    def test_failed_sleep_makes_the_machine_usable_and_alerts_on_the_third(self):
+        f = Fleet()
+        f.ctl.step(f.view(awake=(1,)), T0)
+        f.ctl.step(f.view(awake=(1,)), T0 + 30 * MIN)
+        self.assertFalse(f.ctl.sleep_failed("host1", T0 + 30 * MIN))
+        # Atsisakė: laisvi runner'iai vėl skaičiuojami, todėl kitos mašinos nežadinama.
+        self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[Q_LIGHT]), T0 + 31 * MIN), [])
+        self.assertFalse(f.ctl.sleep_failed("host1", T0 + 61 * MIN))
+        self.assertTrue(f.ctl.sleep_failed("host1", T0 + 91 * MIN))
 
     def test_dry_run_never_retries_or_alerts(self):
         f = Fleet()

@@ -52,6 +52,10 @@ class SleepTest(unittest.TestCase):
             _, run = self.fake(code)
             self.assertIn(word, actions.put_to_sleep(M, "/k", "/kh", run=run))
 
+    def test_only_a_scheduled_sleep_or_reboot_counts_as_success(self):
+        ok = {code for code, text in actions.SLEEP_EXIT.items() if text.startswith(actions.SLEEP_OK)}
+        self.assertEqual(ok, {0, 4})
+
     def test_timeout(self):
         _, run = self.fake(timeout=True)
         self.assertIn("neatsakė", actions.put_to_sleep(M, "/k", "/kh", run=run))
@@ -230,6 +234,21 @@ class GitHubResilienceTest(unittest.TestCase):
         fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
         fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": []}, None)
         self.assertEqual(gh.observe().queued, ())
+
+    def test_cached_run_keeps_its_etag_for_the_next_refetch(self):
+        routes = dict(ROUTES)
+        routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
+        routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t1"}]}, None)
+        routes["repos/o/r/actions/runs/7/jobs"] = (ROUTES["repos/o/r/actions/runs/7/jobs"][0], '"j1"')
+        fake = FakeGitHub(routes)
+        now = [datetime(2026, 10, 17, 12, tzinfo=timezone.utc)]
+        gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake, clock=lambda: now[0])
+        gh.observe()
+        gh.observe()  # iš atminties
+        now[0] = now[0] + github.IN_PROGRESS_REFRESH
+        gh.observe()
+        sent = [etag for url, etag in fake.seen if "/runs/7/jobs" in url]
+        self.assertEqual(sent, [None, '"j1"'])
 
     def test_low_rate_limit_asks_to_wait_until_reset(self):
         class Limited(FakeGitHub):

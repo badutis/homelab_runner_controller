@@ -25,6 +25,7 @@ die() { echo "klaida: $*" >&2; exit 1; }
 id "$USER_NAME" >/dev/null 2>&1 || die "--user turi būti esama paskyra"
 [ "$USER_NAME" != "ciuser" ] || die "ne ciuser: ta paskyra vykdo CI kodą"
 [ -f "$PUBKEY" ] || die "--pubkey failas nerastas"
+[ "$(grep -c . "$PUBKEY")" -eq 1 ] || die "--pubkey faile turi būti lygiai vienas raktas"
 grep -qE '^ssh-(ed25519|rsa) ' "$PUBKEY" || die "--pubkey nėra viešasis SSH raktas"
 [ -e "/sys/class/net/$IFACE" ] || die "sąsajos $IFACE nėra"
 HERE="$(cd "$(dirname "$0")" && pwd)"

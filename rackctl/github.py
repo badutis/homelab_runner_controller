@@ -149,7 +149,12 @@ class GitHub:
             runners.extend(got_runners)
             queued.extend(got_jobs)
         # Baigtų paleidimų atsakymų nebeprireiks; be šito atmintis augtų be ribos.
-        self._cache = {k: v for k, v in self._cache.items() if k in self._touched}
+        # Iš atminties paimto paleidimo ETag paliekamas: kitaip kitas jo perklausimas būtų
+        # be If-None-Match ir skaičiuotųsi į limitą net nepasikeitus.
+        kept_urls = tuple(f"{API}/{p}?" for p in self._kept)
+        self._cache = {
+            k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)
+        }
         self._run_jobs = {k: v for k, v in self._run_jobs.items() if k in self._kept}
         return Observation(runners=tuple(runners), queued=tuple(queued), complete=complete)
 
@@ -178,7 +183,12 @@ class GitHub:
                     labels = frozenset(l.lower() for l in job.get("labels", []))
                     if job.get("status") == "queued" and "self-hosted" in labels:
                         jobs.append(
-                            QueuedJob(labels=labels, since=parse_time(job.get("created_at")), source=src.runners_path)
+                            QueuedJob(
+                                labels=labels,
+                                since=parse_time(job.get("created_at")),
+                                source=src.runners_path,
+                                id=job.get("id"),
+                            )
                         )
                 self._run_jobs[path] = (now, updated if status == "in_progress" else "", jobs)
                 self._kept.add(path)

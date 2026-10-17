@@ -23,6 +23,7 @@ def wake(machine: Machine, broadcast: str = "255.255.255.255", port: int = 9) ->
 
 # `rack-sleep` išėjimo kodai (machine/rack-sleep). Jis užmigdymą suplanuoja po kelių
 # sekundžių ir išeina pirma, todėl SSH sesija baigiasi švariai, o ne nutrūksta.
+SLEEP_OK = ("užmigs", "persikraus")
 SLEEP_EXIT = {
     0: "užmigs po 5 s",
     3: "atsisakė: mašinoje vyksta job'as",
