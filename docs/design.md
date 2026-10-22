@@ -106,7 +106,9 @@ the key for the account that runs CI jobs (`--ci-user`).
 ## SD card
 
 The controller writes the state file only when a machine's "last online" day or its
-hold changes, a few times a day. On Armbian, logs go to RAM (`armbian-ramlog`).
+hold changes, a few times a day. `orangepi/install.sh` keeps the systemd journal in RAM
+(`Storage=volatile`, at most 16 MB). On Armbian, the other logs already go to RAM
+(`armbian-ramlog`).
 
 ## Dry run
 
