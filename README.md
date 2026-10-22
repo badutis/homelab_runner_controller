@@ -206,19 +206,21 @@ also posts to a webhook (a Discord or Slack channel, or anything that takes JSON
   short network drop stays quiet.
 - `repeat_hours` (default 6): how often the message repeats while the problem lasts.
 
-What is sent, also in `dry_run`:
+What is sent:
 
-| Event | When | "Resolved" message |
-|---|---|---|
-| a GitHub source cannot be read | for `after_minutes` without a break; nothing is suspended meanwhile | yes |
-| the GitHub request limit is nearly used up | at once; polling waits for the reset | yes |
-| a machine did not wake up | after the second wake attempt | — |
-| a machine failed to suspend | three times in a row | — |
-| the controller started | each start (version, machine count, `dry_run`) | — |
+| Event | When | "Resolved" message | In `dry_run` |
+|---|---|---|---|
+| a GitHub source cannot be read | for `after_minutes` without a break; nothing is suspended meanwhile | yes | yes |
+| the GitHub request limit is nearly used up | at once; polling waits for the reset | yes | yes |
+| the controller started | each start (version, machine count, `dry_run`) | — | yes |
+| a machine did not wake up | after the second wake attempt | — | no (nothing is sent to it) |
+| a machine failed to suspend | three times in a row | — | no (nothing is sent to it) |
 
 Messages are posted from a separate thread. A slow or broken webhook never holds up the
-control loop. A failed post is logged (without the URL) and counted in
-`rackctl_notify_failed_total`.
+control loop. A post that fails (an error answer, a rate limit, a timeout) is logged
+without the URL, counted in `rackctl_notify_failed_total` and tried again after 5 minutes.
+A redirect counts as a failure, because following it would silently drop the message.
+The URL must be `https` (plain `http` only to `localhost`, for a local relay).
 
 ## Metrics
 

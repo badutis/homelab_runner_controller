@@ -269,6 +269,11 @@ def run(cfg: dict) -> None:
         if sender is not None:
             sender.send(msg)
 
+    def retry_undelivered(now: datetime) -> None:
+        if sender is not None:
+            for key in sender.take_undelivered():
+                notifier.not_delivered(key, now)
+
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
     notify(notifier.event(
         "start", f"rackctl {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
@@ -276,6 +281,7 @@ def run(cfg: dict) -> None:
 
     while True:
         now = datetime.now(timezone.utc)
+        retry_undelivered(now)
         try:
             pause = gh.backoff_until()
             if pause is not None and pause > now:

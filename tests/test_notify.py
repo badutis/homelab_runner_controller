@@ -59,6 +59,31 @@ class NotifierTest(unittest.TestCase):
         self.assertIsNotNone(self.n.event("wake:host1", "x", T0 + timedelta(hours=6)))
 
 
+class RetryTest(unittest.TestCase):
+    def setUp(self):
+        self.n = Notifier(after=10 * MIN, repeat=timedelta(hours=6))
+
+    def test_an_undelivered_problem_is_tried_again_after_five_minutes(self):
+        self.n.problem("k", "x", T0)
+        self.assertIsNotNone(self.n.problem("k", "x", T0 + 10 * MIN))
+        self.n.not_delivered("k", T0 + 10 * MIN)
+        self.assertIsNone(self.n.problem("k", "x", T0 + 14 * MIN))
+        self.assertIsNotNone(self.n.problem("k", "x", T0 + 15 * MIN))
+
+    def test_an_undelivered_event_is_tried_again_after_five_minutes(self):
+        self.n.event("wake:host1", "x", T0)
+        self.n.not_delivered("wake:host1", T0)
+        self.assertIsNone(self.n.event("wake:host1", "x", T0 + 4 * MIN))
+        self.assertIsNotNone(self.n.event("wake:host1", "x", T0 + 5 * MIN))
+
+    def test_a_problem_that_ended_meanwhile_is_not_retried(self):
+        self.n.problem("k", "x", T0)
+        self.n.problem("k", "x", T0 + 10 * MIN)
+        self.n.clear("k", "ok", T0 + 11 * MIN)
+        self.n.not_delivered("k", T0 + 11 * MIN)  # the late failure report of the first message
+        self.assertEqual(self.n.problems, {})
+
+
 class PayloadTest(unittest.TestCase):
     def test_formats(self):
         m = Message("source:orgs/o", "text", resolved=True)
@@ -82,6 +107,19 @@ class ReadUrlTest(unittest.TestCase):
             with self.assertRaises(ValueError) as e:
                 read_url(path)
             self.assertNotIn(SECRET_URL_PART, str(e.exception))
+
+    def test_plain_http_only_to_this_machine(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u")
+            for url, ok in (("http://example.com/hook", False), ("http://127.0.0.1:9199/hook", True),
+                            ("http://localhost/hook", True), ("ftp://example.com/x", False), ("https://", False)):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(url)
+                if ok:
+                    self.assertEqual(read_url(path), url)
+                else:
+                    with self.assertRaises(ValueError, msg=url):
+                        read_url(path)
 
 
 class Receiver:
@@ -129,7 +167,32 @@ class SenderTest(unittest.TestCase):
             s.send(Message("k", "x"))
             s.close()
         self.assertEqual(s.failed, 1)
+        self.assertEqual(s.take_undelivered(), ["k"])  # handed back for a retry, once
+        self.assertEqual(s.take_undelivered(), [])
         self.assertNotIn(SECRET_URL_PART, "\n".join(logs.output))
+
+    def test_a_redirect_is_a_failure_not_a_silent_get(self):
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(301)
+                self.send_header("Location", "/elsewhere")
+                self.end_headers()
+
+            def do_GET(self):  # a followed redirect would land here and look like success
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        s = Sender(f"http://127.0.0.1:{server.server_port}/hook", "discord", "ua")
+        s.send(Message("k", "x"))
+        s.close()
+        self.assertEqual((s.failed, s.take_undelivered()), (1, ["k"]))
 
     def test_an_unreachable_webhook_is_counted_and_the_url_is_never_logged(self):
         r = Receiver()

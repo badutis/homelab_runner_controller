@@ -110,10 +110,12 @@ def check(path: str):
             raise ValueError("notify.url_file must be a file of its own")
         if notify.get("format") not in FORMATS:
             raise ValueError(f"notify.format must be one of {', '.join(FORMATS)}")
-        for key, default in (("after_minutes", 10), ("repeat_hours", 6)):
-            v = notify.get(key, default)
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or (key == "repeat_hours" and v == 0):
-                raise ValueError(f"notify.{key} must be a number, at least {'1' if key == 'repeat_hours' else '0'}")
+        after = notify.get("after_minutes", 10)
+        if isinstance(after, bool) or not isinstance(after, (int, float)) or after < 0:
+            raise ValueError("notify.after_minutes must be a number, 0 or more")
+        repeat = notify.get("repeat_hours", 6)
+        if isinstance(repeat, bool) or not isinstance(repeat, (int, float)) or repeat <= 0:
+            raise ValueError("notify.repeat_hours must be a number greater than 0")
         # The installer treats it like a token: it must exist and be readable by the service.
         out.append(("token", url_file))
 

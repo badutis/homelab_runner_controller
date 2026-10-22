@@ -15,20 +15,24 @@ The webhook URL holds a secret (a Discord or Slack URL is enough to post as you)
 read from a file and never written to the log.
 """
 
+import collections
 import json
 import logging
 import queue
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, Dict, Optional
+from typing import Callable, Deque, Dict, List, Optional
 
 log = logging.getLogger("rackctl")
 
 FORMATS = ("discord", "slack", "json")
 DISCORD_LIMIT = 2000  # characters in one Discord message
+RETRY_AFTER = timedelta(minutes=5)  # a message that could not be sent is tried again after this
+LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,16 @@ class Notifier:
         self.events[key] = now
         return Message(key, text)
 
+    def not_delivered(self, key: str, now: datetime) -> None:
+        """The message for ``key`` was not delivered: try again after RETRY_AFTER instead of
+        waiting a whole ``repeat``. A problem that has ended meanwhile is not retried."""
+        retry_at = now - self.repeat + RETRY_AFTER
+        p = self.problems.get(key)
+        if p is not None and p.last_sent is not None:
+            p.last_sent = retry_at
+        elif key in self.events:
+            self.events[key] = retry_at
+
 
 def payload(fmt: str, msg: Message) -> dict:
     if fmt == "discord":
@@ -91,16 +105,30 @@ def payload(fmt: str, msg: Message) -> dict:
 
 
 def read_url(path: str) -> str:
+    """The webhook URL: https, or plain http only to this machine itself (a local relay)."""
     with open(path, encoding="utf-8") as f:
         url = f.read().strip()
-    if not (url.startswith("https://") or url.startswith("http://")):
+    parts = urllib.parse.urlsplit(url)
+    ok = parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in LOOPBACK)
+    if not ok or not parts.hostname:
         # Says nothing about the content: the file holds a secret.
-        raise ValueError(f"{path} does not hold an http(s) URL")
+        raise ValueError(f"{path} does not hold an https URL (plain http only to localhost)")
     return url
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib would follow a redirect of a POST with a GET and no body, which looks like a
+    success while nothing is posted. A redirect is a failure instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class Sender:
-    def __init__(self, url: str, fmt: str, user_agent: str, opener: Callable = urllib.request.urlopen,
+    def __init__(self, url: str, fmt: str, user_agent: str, opener: Callable = _OPENER.open,
                  timeout: float = 10.0, size: int = 100):
         if fmt not in FORMATS:
             raise ValueError(f"unknown notify format {fmt!r}")
@@ -111,6 +139,8 @@ class Sender:
         self._timeout = timeout
         self._queue: "queue.Queue[Optional[Message]]" = queue.Queue(maxsize=size)
         self.failed = 0
+        # Keys of messages that were not delivered; the loop hands them back to the Notifier.
+        self._undelivered: Deque[str] = collections.deque()
         self._thread = threading.Thread(target=self._run, name="rackctl-notify", daemon=True)
         self._thread.start()
 
@@ -121,8 +151,18 @@ class Sender:
         try:
             self._queue.put_nowait(msg)
         except queue.Full:
-            self.failed += 1
-            log.warning("notify %s: queue full, message dropped", msg.key)
+            self._fail(msg, "queue full, message dropped")
+
+    def take_undelivered(self) -> List[str]:
+        out = []
+        while self._undelivered:
+            out.append(self._undelivered.popleft())
+        return out
+
+    def _fail(self, msg: Message, why: str) -> None:
+        self.failed += 1
+        self._undelivered.append(msg.key)
+        log.warning("notify %s: %s", msg.key, why)
 
     def close(self, wait: float = 5.0) -> None:
         """Stop after the queued messages are sent (for tests and a clean exit)."""
@@ -145,9 +185,8 @@ class Sender:
             with self._open(req, timeout=self._timeout) as resp:
                 resp.read()
         except urllib.error.HTTPError as e:
-            self.failed += 1
-            log.warning("notify %s: webhook answered HTTP %s", msg.key, e.code)
+            # 3xx (a redirect is refused, see _NoRedirect), 429 (rate limit), 5xx, ...
+            self._fail(msg, f"webhook answered HTTP {e.code}; trying again later")
         except Exception as e:  # noqa: BLE001 — a broken webhook must never stop the controller
-            self.failed += 1
             # The exception text may contain the URL; only its type is logged.
-            log.warning("notify %s: post failed (%s)", msg.key, type(e).__name__)
+            self._fail(msg, f"post failed ({type(e).__name__}); trying again later")
