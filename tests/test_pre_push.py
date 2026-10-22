@@ -111,6 +111,14 @@ class PrePushHookTest(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIsNone(self.remote_sha("refs/tags/outer"))
 
+    def test_a_blob_pushed_as_a_tag_is_refused(self):
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=self.work, env=self.env,
+                              input=f"host {PRIV}\n".encode(), capture_output=True, check=True).stdout.decode().strip()
+        out = self.push(f"{blob}:refs/tags/blobtag")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(f"private address {PRIV}", out.stderr)
+        self.assertIsNone(self.remote_sha("refs/tags/blobtag"))
+
     def test_a_local_tag_that_is_not_pushed_does_not_block_a_clean_push(self):
         branch = self.git("branch", "--show-current")
         self.git("tag", "-a", "private-note", "-m", f"host {PRIV}")

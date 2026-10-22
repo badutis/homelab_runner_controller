@@ -125,10 +125,32 @@ class RepositoryTest(unittest.TestCase):
     def test_commit_message_and_author_name_are_scanned(self):
         code, out = self.run_in_repo(["x\n"], message=f"fix\n\nCo-Authored-By: {TOOL} <a@example.com>")
         self.assertEqual(code, 1)
-        self.assertIn("(message)", out)
+        self.assertRegex(out, r"commit [0-9a-f]{7}:\d+: AI attribution")
         code, out = self.run_in_repo(["x\n"], author=TOOL)
         self.assertEqual(code, 1)
-        self.assertIn("(author, committer)", out)
+        self.assertRegex(out, r"commit [0-9a-f]{7}:\d+: AI attribution")
+
+    def test_a_message_with_control_characters_does_not_crash(self):
+        self.assertEqual(self.run_in_repo(["x\n"], message="a\x1eb"), (0, ""))
+
+    def test_a_tag_pointing_straight_at_a_blob_is_scanned(self):
+        def after(d, git):
+            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=d, capture_output=True,
+                                  input=f"host {PRIV}\n".encode(), check=True).stdout.decode().strip()
+            git("tag", "blobtag", blob)
+
+        code, out = self.run_in_repo(["x\n"], after=after)
+        self.assertEqual(code, 1)
+        self.assertIn(f"(blob)", out)
+
+    def test_a_tag_chain_too_long_to_read_fails_instead_of_passing(self):
+        def after(d, git):
+            git("tag", "-a", "t0", "-m", "start")
+            for i in range(1, 102):
+                git("tag", "-a", f"t{i}", "-m", "x", f"t{i - 1}")
+
+        code, _ = self.run_in_repo(["x\n"], after=after)
+        self.assertEqual(code, 3)
 
     def test_annotated_tag_message_is_scanned(self):
         code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")

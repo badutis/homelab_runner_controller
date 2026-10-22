@@ -23,6 +23,8 @@ OPT=/opt/rackctl
 UNIT=/etc/systemd/system/rackctl.service
 JOURNALD_DROPIN=/etc/systemd/journald.conf.d/50-rackctl-volatile.conf
 SVC_USER=rackctl
+# The unit runs exactly this interpreter (controller/rackctl.service), so it is the one checked.
+PY=/usr/bin/python3
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(cd "$HERE/.." && pwd)"
@@ -40,7 +42,7 @@ while [ $# -gt 0 ]; do
     --version) VERSION="$2"; shift 2 ;;
     --set-token) TOKEN_NAME="$2"; shift 2 ;;
     --ram-journal) RAM_JOURNAL=yes; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -62,7 +64,7 @@ if [ -n "$TOKEN_NAME" ]; then
     config.json|*.pub|id_ed25519|known_hosts) die "$TOKEN_NAME is not a token file name" ;;
   esac
   if [ -f "$ETC/config.json" ]; then
-    PATHS="$(python3 "$OPT/controller/check_config.py" "$ETC/config.json")" \
+    PATHS="$("$PY" "$OPT/controller/check_config.py" "$ETC/config.json")" \
       || die "$ETC/config.json is invalid: fix it before setting tokens"
     if printf '%s\n' "$PATHS" | awk -F'\t' '$1 == "ssh_key" || $1 == "known_hosts" {print $2}' | grep -qxF "$ETC/$TOKEN_NAME"; then
       die "$ETC/$TOKEN_NAME is the SSH key or known_hosts, not a token"
@@ -107,27 +109,28 @@ note "host: $MODEL, $(uname -m), ${MEM_MB} MB RAM"
 
 # --- packages ----------------------------------------------------------------------------
 NEED=()
-command -v python3 >/dev/null || NEED+=(python3)
+[ -x "$PY" ] || NEED+=(python3)
 for c in ssh ssh-keygen ssh-keyscan; do
   command -v "$c" >/dev/null || { NEED+=(openssh-client); break; }
 done
 # python3-minimal alone has the binary but not the whole standard library.
 STDLIB='import compileall, http.server, ipaddress, json, urllib.request'
-command -v python3 >/dev/null && ! python3 -c "$STDLIB" 2>/dev/null && NEED+=(python3)
+[ -x "$PY" ] && ! "$PY" -c "$STDLIB" 2>/dev/null && NEED+=(python3)
 if [ ${#NEED[@]} -gt 0 ]; then
   # Installed automatically only with apt (Debian, Ubuntu, Raspberry Pi OS, Armbian).
   command -v apt-get >/dev/null \
-    || die "missing ${NEED[*]}: install Python 3.9+ (with its standard library) and the OpenSSH client with your package manager, then run again"
+    || die "missing ${NEED[*]}: install Python 3.9+ as $PY (with its standard library) and the OpenSSH client with your package manager, then run again"
   note "installing ${NEED[*]}"
   apt-get update -q
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${NEED[@]}"
 fi
-python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "python3 is older than 3.9"
-python3 -c "$STDLIB" || die "python3 lacks part of its standard library"
+[ -x "$PY" ] || die "$PY not found: the service runs it"
+"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "$PY is older than 3.9 (the service runs that one)"
+"$PY" -c "$STDLIB" || die "$PY lacks part of its standard library"
 
 # --- the configuration, checked before anything changes ------------------------------------
 if [ -n "$CONFIG" ]; then
-  python3 "$HERE/check_config.py" "$CONFIG" >/dev/null || die "configuration rejected, nothing changed"
+  "$PY" "$HERE/check_config.py" "$CONFIG" >/dev/null || die "configuration rejected, nothing changed"
 fi
 
 # --- the account -------------------------------------------------------------------------
@@ -147,7 +150,7 @@ chown -R root:root "$OPT/rackctl.new"
 find "$OPT/rackctl.new" -type d -exec chmod 0755 {} +
 find "$OPT/rackctl.new" -type f -exec chmod 0644 {} +
 # Compiled now, as root: the service may not write to /opt (ProtectSystem=strict).
-python3 -m compileall -q "$OPT/rackctl.new" >/dev/null
+"$PY" -m compileall -q "$OPT/rackctl.new" >/dev/null
 [ -d "$OPT/rackctl" ] && mv "$OPT/rackctl" "$OPT/rackctl.old"
 mv "$OPT/rackctl.new" "$OPT/rackctl"
 rm -rf "$OPT/rackctl.old"
@@ -176,7 +179,7 @@ if [ ! -f "$ETC/config.json" ]; then
   note "no $ETC/config.json yet: run again with --config FILE (start from controller/config.example.json)"
   START=no
 else
-  PATHS="$(python3 "$OPT/controller/check_config.py" "$ETC/config.json")" || die "$ETC/config.json is invalid"
+  PATHS="$("$PY" "$OPT/controller/check_config.py" "$ETC/config.json")" || die "$ETC/config.json is invalid"
   START=yes
 fi
 
@@ -191,7 +194,7 @@ if [ "$START" = yes ]; then
     [ ! -L "$f" ] || die "$f is a symlink"
   done
 
-  # --- SSH key for the machines (made here, never leaves the board) -----------------------
+  # --- SSH key for the machines (made here, never leaves this host) -----------------------
   if [ ! -f "$KEY" ]; then
     ssh-keygen -q -t ed25519 -N '' -C "rackctl@$(hostname)" -f "$KEY"
     note "new SSH key $KEY"

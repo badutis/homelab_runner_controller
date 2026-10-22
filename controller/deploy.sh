@@ -18,7 +18,7 @@ set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
-usage() { sed -n '2,10p' "$0" >&2; exit 2; }
+usage() { sed -n '2,8p' "$0" >&2; exit 2; }
 BUNDLE_ONLY=""
 INSTALL_FLAGS=""
 while [ $# -gt 0 ]; do
@@ -39,12 +39,18 @@ else
 fi
 REF="$1"
 CONFIG="$2"
+[ -z "$BUNDLE_ONLY" ] || [ -z "$INSTALL_FLAGS" ] \
+  || die "--ram-journal is passed to the installer on the host; it has no effect with --bundle-only"
 
 REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 COMMIT="$(git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}")" || die "no such git ref: $REF"
 VERSION="$(git -C "$REPO" describe --tags --exact-match "$COMMIT" 2>/dev/null || git -C "$REPO" rev-parse --short "$COMMIT")"
 [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]] || die "unexpected version string: $VERSION"
 [ -f "$CONFIG" ] || die "config not found: $CONFIG"
+# Versions before controller/ (v0.1.0) kept these scripts in orangepi/: deploy those with
+# their own copy, `git show <ref>:orangepi/deploy.sh > /tmp/deploy-old.sh`.
+git -C "$REPO" cat-file -e "$COMMIT:controller/install.sh" 2>/dev/null \
+  || die "$VERSION has no controller/install.sh (an older layout); deploy it with that version's own deploy.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

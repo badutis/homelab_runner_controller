@@ -140,36 +140,47 @@ def index_files() -> Iterable[Tuple[str, str]]:
             yield path, text
 
 
+def object_types(shas: List[str]) -> dict:
+    """sha -> object type, for many objects in one git call."""
+    if not shas:
+        return {}
+    out = subprocess.run(
+        ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input="\n".join(shas).encode() + b"\n", check=True, capture_output=True,
+    ).stdout.decode(errors="replace")
+    return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
+
+
 def history_blobs(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    seen = set()
+    """Every blob reachable from ``rev``. A blob with no path is one a tag points at
+    directly; it is scanned too."""
+    listed = []
     for line in git("rev-list", "--objects", rev, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
-        if not path or path in SELF or sha in seen:
+        if path not in SELF:
+            listed.append((sha, path))
+    types = object_types(sorted({sha for sha, _ in listed}))
+    seen = set()
+    for sha, path in listed:
+        if sha in seen or types.get(sha) != "blob":
             continue
         seen.add(sha)
-        if git("cat-file", "-t", sha).strip() != b"blob":
-            continue
         text = decode(git("cat-file", "blob", sha))
         if text is not None:
-            yield f"{path}@{sha[:7]}", text
+            yield f"{path or '(blob)'}@{sha[:7]}", text
 
 
 def commits(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    sep = "\x1e"
-    log = git("log", rev, f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode(errors="replace")
-    for entry in log.split(sep):
-        entry = entry.strip("\n")
-        if not entry:
-            continue
-        sha, people, body = entry.split("\0", 2)
-        yield f"commit {sha} (author, committer)", people
-        yield f"commit {sha} (message)", body
+    """Every commit reachable from ``rev``, read raw: author and committer (names and
+    emails) and the message, whatever characters the message holds."""
+    for sha in git("rev-list", rev, "--").decode(errors="replace").split():
+        yield f"commit {sha[:7]}", git("cat-file", "commit", sha).decode(errors="replace")
 
 
 def tag_chain(sha: str) -> Iterable[Tuple[str, str]]:
     """Every tag object from ``sha`` down to what it finally points at (tags can be nested).
     The raw object holds the tag name, the tagger and the message."""
-    for _ in range(100):  # a chain this long is not a real tag
+    for _ in range(100):
         if git("cat-file", "-t", sha).strip() != b"tag":
             return
         raw = git("cat-file", "tag", sha).decode(errors="replace")
@@ -178,6 +189,8 @@ def tag_chain(sha: str) -> Iterable[Tuple[str, str]]:
         if not target:
             return
         sha = target.group(1)
+    # Refuse rather than leave the inner tags unread.
+    raise RuntimeError(f"tag chain longer than 100 objects at {sha[:7]}")
 
 
 def tags() -> Iterable[Tuple[str, str]]:
@@ -219,6 +232,9 @@ def main(argv=None) -> int:
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode(errors="replace").strip()
         print(f"git failed: {' '.join(e.cmd)}: {err}", file=sys.stderr)
+        return 3
+    except Exception as e:  # noqa: BLE001 — a crash must never read as "findings"
+        print(f"check failed: {e!r}", file=sys.stderr)
         return 3
     for f in found:
         print(f)
