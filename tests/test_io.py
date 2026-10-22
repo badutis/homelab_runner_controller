@@ -313,6 +313,7 @@ class MetricsTest(unittest.TestCase):
             ["rackctl_github_ok", "gauge"],
             ["rackctl_github_remaining", "gauge"],
             ["rackctl_dry_run", "gauge"],
+            ["rackctl_notify_failed_total", "counter"],
         ])
 
 

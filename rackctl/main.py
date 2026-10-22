@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 from . import actions as act
 from .decide import Action, Controller, Machine, MachineState, Observation, Settings
 from .github import GitHub, Source, read_token
+from .notify import Notifier, Sender, read_url
 
 log = logging.getLogger("rackctl")
 
@@ -46,6 +47,29 @@ def machines_from(cfg: dict) -> tuple:
         )
         for m in cfg["machines"]
     )
+
+
+def read_version() -> str:
+    """The release this copy was installed from (controller/install.sh writes VERSION next
+    to the package), or "unknown"."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def notifications(cfg: dict, version: str) -> "tuple[Notifier, Optional[Sender]]":
+    """Without a `notify` block everything stays in the log, as before."""
+    n = cfg.get("notify")
+    if not n:
+        return Notifier(), None
+    notifier = Notifier(
+        after=timedelta(minutes=n.get("after_minutes", 10)),
+        repeat=timedelta(hours=n.get("repeat_hours", 6)),
+    )
+    return notifier, Sender(read_url(n["url_file"]), n["format"], f"rackctl/{version}")
 
 
 def sources_from(cfg: dict) -> List[Source]:
@@ -124,6 +148,7 @@ class Metrics:
         busy_seconds: Dict[str, float],
         obs: Optional[Observation],
         dry_run: bool,
+        notify_failed: int = 0,
     ) -> None:
         lines = [
             "# HELP rackctl_machine_awake 1 when at least one runner of the machine is online.",
@@ -171,6 +196,11 @@ class Metrics:
         for source, rem in sorted(gh.remaining.items()):
             lines.append(f'rackctl_github_remaining{{source="{source}"}} {rem}')
         lines += ["# TYPE rackctl_dry_run gauge", f"rackctl_dry_run {int(dry_run)}"]
+        lines += [
+            "# HELP rackctl_notify_failed_total Webhook messages that could not be sent.",
+            "# TYPE rackctl_notify_failed_total counter",
+            f"rackctl_notify_failed_total {notify_failed}",
+        ]
         with self.lock:
             self.text = "\n".join(lines) + "\n"
 
@@ -232,7 +262,17 @@ def run(cfg: dict) -> None:
     saved = snapshot(ctl.state)
     last_poll: Optional[datetime] = None
     obs: Optional[Observation] = None
-    log.info("started: %d machines, dry_run=%s", len(machines), dry_run)
+    version = read_version()
+    notifier, sender = notifications(cfg, version)
+
+    def notify(msg) -> None:
+        if sender is not None:
+            sender.send(msg)
+
+    log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
+    notify(notifier.event(
+        "start", f"rackctl {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
+        datetime.now(timezone.utc)))
 
     while True:
         now = datetime.now(timezone.utc)
@@ -240,10 +280,24 @@ def run(cfg: dict) -> None:
             pause = gh.backoff_until()
             if pause is not None and pause > now:
                 log.warning("GitHub limit nearly used up; waiting until %s", pause.isoformat())
+                notify(notifier.problem(
+                    "limit", f"rackctl: GitHub request limit nearly used up; not polling until "
+                    f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
+                    "meanwhile.", now, wait=False))
             else:
+                notify(notifier.clear("limit", "rackctl: GitHub request limit reset; polling again.", now))
                 obs = gh.observe()
                 for source, err in gh.errors.items():
                     log.warning("source %s not read: %s", source, err)
+                for src in gh.sources:
+                    key = f"source:{src.runners_path}"
+                    err = gh.errors.get(src.runners_path)
+                    if err is not None:
+                        notify(notifier.problem(
+                            key, f"rackctl: GitHub source {src.runners_path} cannot be read: {err}. "
+                            "No machine is suspended while this lasts (check its token).", now))
+                    else:
+                        notify(notifier.clear(key, f"rackctl: GitHub source {src.runners_path} is readable again.", now))
                 if last_poll is not None:
                     elapsed = min((now - last_poll).total_seconds(), 2 * cfg["poll_seconds"])
                     for r in obs.runners:
@@ -261,10 +315,15 @@ def run(cfg: dict) -> None:
                     except Exception as e:  # noqa: BLE001 — an error on one machine does not stop the others
                         result = f"error: {e!r}"
                     log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
+                    if a.kind == "alert":
+                        notify(notifier.event(f"wake:{a.machine}", f"rackctl: {a.machine} {a.reason}.", now))
                     if a.kind == "sleep" and not result.startswith(act.SLEEP_OK):
                         counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
                         if ctl.sleep_failed(a.machine, now):
                             log.error("alert %s: failed to suspend 3 times in a row — %s", a.machine, result)
+                            notify(notifier.event(
+                                f"sleep:{a.machine}",
+                                f"rackctl: {a.machine} failed to suspend 3 times in a row: {result}.", now))
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)
@@ -272,7 +331,7 @@ def run(cfg: dict) -> None:
         except Exception:  # noqa: BLE001 — the loop never dies: next try after poll_seconds
             log.exception("loop error")
         try:
-            metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run)
+            metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run, sender.failed if sender else 0)
         except Exception:  # noqa: BLE001
             log.exception("metrics error")
         time.sleep(cfg["poll_seconds"])

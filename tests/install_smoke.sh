@@ -10,7 +10,27 @@ step() { echo; echo "== $*"; }
 mode_owner() { sudo stat -c '%a %U' "$1"; }
 
 W="$(mktemp -d)"
-trap 'rm -rf "$W"' EXIT
+HOOK_PID=""
+trap '[ -z "$HOOK_PID" ] || kill "$HOOK_PID" 2>/dev/null; rm -rf "$W"' EXIT
+
+step "webhook receiver (stands in for Discord)"
+# Appends every POST body to $W/hook.log, one per line.
+python3 - "$W/hook.log" <<'PY' &
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+out = sys.argv[1]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        with open(out, "ab") as f:
+            f.write(body + b"\n")
+        self.send_response(204)
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+HTTPServer(("127.0.0.1", 9199), H).serve_forever()
+PY
+HOOK_PID=$!
 
 step "bundle"
 controller/deploy.sh --bundle-only "$W/b.tar.gz" HEAD controller/config.example.json
@@ -23,6 +43,7 @@ OUT="$(sudo bash "$W/x/controller/install.sh" --config "$W/x/config.json" --vers
 echo "$OUT"
 grep -q "NOT started" <<<"$OUT" || fail "service started without tokens"
 grep -q "missing token /etc/rackctl/token-example-org:" <<<"$OUT" || fail "missing token not reported"
+grep -q "missing token /etc/rackctl/notify-url:" <<<"$OUT" || fail "missing webhook URL not reported"
 id rackctl >/dev/null || fail "no rackctl user"
 [ "$(getent passwd rackctl | cut -d: -f7)" = /usr/sbin/nologin ] || fail "rackctl can log in"
 [ "$(mode_owner /etc/rackctl)" = "750 root" ] || fail "/etc/rackctl: $(mode_owner /etc/rackctl)"
@@ -48,6 +69,7 @@ done
 [ "$(mode_owner /etc/rackctl/config.json)" = "640 root" ] || fail "config.json touched by --set-token"
 printf 'not-a-real-token\n' | sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org
 printf '  not-a-real-token-2 \n' | sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org2
+printf 'http://127.0.0.1:9199/hook\n' | sudo bash /opt/rackctl/controller/install.sh --set-token notify-url
 [ "$(mode_owner /etc/rackctl/token-example-org)" = "600 rackctl" ] || fail "token mode"
 [ "$(sudo cat /etc/rackctl/token-example-org2)" = not-a-real-token-2 ] || fail "token not trimmed"
 
@@ -60,10 +82,20 @@ grep -q "rackctl is running" <<<"$OUT" || fail "service did not start"
 grep -qx 'Storage=volatile' /etc/systemd/journald.conf.d/50-rackctl-volatile.conf || fail "--ram-journal had no effect"
 grep -q "host: .*, $(uname -m), " <<<"$OUT" || fail "host line missing"
 
+step "start message reached the webhook"
+for _ in $(seq 1 20); do
+  grep -q 'rackctl smoke started' "$W/hook.log" 2>/dev/null && break
+  sleep 1
+done
+cat "$W/hook.log" 2>/dev/null || true
+grep -q '"content": "rackctl smoke started' "$W/hook.log" || fail "no start message on the webhook"
+grep -q '"allowed_mentions"' "$W/hook.log" || fail "Discord message without allowed_mentions"
+
 step "metrics"
 for _ in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:9105/metrics 2>/dev/null | grep -q '^rackctl_dry_run 1$'; then
-    curl -fsS http://127.0.0.1:9105/metrics
+  if M="$(curl -fsS http://127.0.0.1:9105/metrics 2>/dev/null)" && grep -q '^rackctl_dry_run 1$' <<<"$M"; then
+    echo "$M"
+    grep -q '^rackctl_notify_failed_total 0$' <<<"$M" || fail "webhook posts failed"
     echo; echo "OK"
     exit 0
   fi

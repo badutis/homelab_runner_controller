@@ -7,6 +7,12 @@
   "state_file": "/var/lib/rackctl/last-online.json",
   "ssh_key": "/etc/rackctl/id_ed25519",
   "known_hosts": "/etc/rackctl/known_hosts",
+  "notify": {
+    "url_file": "/etc/rackctl/notify-url",
+    "format": "discord",
+    "after_minutes": 10,
+    "repeat_hours": 6
+  },
   "sources": [
     {
       "runners_path": "repos/example-org/app",
