@@ -1,11 +1,11 @@
-"""Kada pažadinti ir kada užmigdyti mašiną. Gryna logika: nei tinklo, nei laiko, nei disko.
+"""When to wake a machine and when to suspend it. Pure logic: no network, no clock, no disk.
 
-Įėjimas — ką šiuo metu rodo GitHub (runner'iai ir job'ai eilėje) ir valdiklio atmintis;
-išėjimas — veiksmų sąrašas. Taip logiką galima patikrinti testais be GitHub, be
-Wake-on-LAN ir be SSH (`tests/test_decide.py`).
+Input: what GitHub shows right now (runners and queued jobs) and the controller's memory.
+Output: a list of actions. So the logic can be tested without GitHub, Wake-on-LAN or SSH
+(`tests/test_decide.py`).
 
-Job'ą runner'is gali paimti tik tada, kai jie iš to paties šaltinio (projekto) ir runner'is
-turi VISAS job'o etiketes — taip, kaip skirsto pats GitHub.
+A runner can take a job only when both come from the same source (project) and the runner
+has ALL of the job's labels, the same way GitHub assigns jobs.
 """
 
 from dataclasses import dataclass, field
@@ -20,7 +20,7 @@ class Machine:
     host: str
     ssh_user: str
     runner_prefixes: Tuple[str, ...]
-    rank: int  # mažesnis žadinamas pirmiau (greitesnės mašinos prieš lėtesnes)
+    rank: int  # lower is woken first (faster machines before slower ones)
 
     def owns(self, runner_name: str) -> bool:
         return any(runner_name.startswith(p) for p in self.runner_prefixes)
@@ -37,8 +37,8 @@ class Runner:
 
 @dataclass(frozen=True)
 class QueuedJob:
-    labels: FrozenSet[str]  # mažosiomis raidėmis
-    since: Optional[datetime] = None  # kada job'as sukurtas (tik informacijai)
+    labels: FrozenSet[str]  # lower case
+    since: Optional[datetime] = None  # when the job was created (information only)
     source: str = ""
     id: Optional[int] = None
 
@@ -47,8 +47,8 @@ class QueuedJob:
 class Observation:
     runners: Tuple[Runner, ...]
     queued: Tuple[QueuedJob, ...]
-    # False, kai bent vieno šaltinio nepavyko perskaityti: tada nežinoma, ar kuris nors
-    # tos mašinos runner'is dirba, todėl niekas nemigdoma (žadinti galima).
+    # False when at least one source could not be read: it is then unknown whether any
+    # runner of that machine is working, so nothing is suspended (waking is still allowed).
     complete: bool = True
 
 
@@ -59,13 +59,13 @@ class Settings:
     wake_attempts: int = 2
     failed_backoff: timedelta = timedelta(minutes=30)
     alert_quiet: timedelta = timedelta(hours=6)
-    # Kiek laiko po užmigdymo komandos mašinos runner'iai dar gali atrodyti prisijungę.
+    # How long after a suspend command the machine's runners may still look online.
     sleep_grace: timedelta = timedelta(minutes=5)
     sleep_retry: timedelta = timedelta(minutes=10)
-    # Job'as, kuris tiek laiko lauka, nors jį galintis imti runner'is pabudęs ir laisvas,
-    # laikomas įstrigusiu (GitHub jo niekam neatiduoda): jis nebežadina ir nebelaiko.
-    # Laikas skaičiuojamas nuo tada, kai toks runner'is atsirado, ne nuo job'o sukūrimo —
-    # kitaip po valdiklio pertraukos senas job'as liktų neaptarnautas visam laikui.
+    # A job that waits this long although a runner that could take it is awake and free is
+    # stuck (GitHub gives it to nobody): it no longer wakes machines or keeps them awake.
+    # The time counts from when such a runner appeared, not from when the job was created;
+    # otherwise an old job seen after a controller outage would never be served.
     stale_queue: timedelta = timedelta(minutes=30)
     weekly: timedelta = timedelta(days=7)
     weekly_hold: timedelta = timedelta(hours=1)
@@ -81,13 +81,13 @@ class MachineState:
     last_alert: Optional[datetime] = None
     sleep_sent: Optional[datetime] = None
     sleep_failures: int = 0
-    # Kada mašina paskutinį kartą pabudo: kol jos runner'iai jungiasi ne vienu metu,
-    # dar neprisijungę skaičiuojami kaip ateinantys, o ne kaip trūkstami.
+    # When the machine last woke up: while its runners connect one by one, those not yet
+    # online are counted as on their way, not as missing.
     woke_at: Optional[datetime] = None
     hold_until: Optional[datetime] = None
     weekly_pending: bool = False
-    # Paskutinis kartas, kai bent vienas runner'is buvo prisijungęs. Saugoma diske kartu su
-    # hold_until: GitHub ištrina runner'į, neprisijungusį 14 dienų (docs/design.md).
+    # The last time at least one runner was online. Kept on disk together with hold_until:
+    # GitHub removes a runner that has not connected for 14 days (docs/design.md).
     last_online: Optional[datetime] = None
 
 
@@ -107,16 +107,16 @@ class Controller:
     machines: Tuple[Machine, ...]
     settings: Settings = field(default_factory=Settings)
     state: Dict[str, MachineState] = field(default_factory=dict)
-    # Stebėjimo režime niekas nesiunčiama, todėl „nepabudo“ nėra gedimas.
+    # In dry run nothing is sent, so "did not wake" is not a failure.
     dry_run: bool = False
-    # job'o id -> kada pirmą kartą jį galėjo paimti pabudęs laisvas runner'is
+    # job id -> when an awake, free runner could first have taken it
     served_since: Dict[int, datetime] = field(default_factory=dict)
 
     def __post_init__(self):
         for m in self.machines:
             self.state.setdefault(m.name, MachineState())
 
-    # --- pagalbinės -------------------------------------------------------------------
+    # --- helpers ---------------------------------------------------------------------
 
     def _runners_of(self, machine: Machine, obs: Observation) -> List[Runner]:
         return [r for r in obs.runners if machine.owns(r.name)]
@@ -132,7 +132,7 @@ class Controller:
         return s.sleep_sent is not None and now - s.sleep_sent < self.settings.sleep_grace
 
     def _usable(self, name: str, now: datetime) -> bool:
-        """Pabudusi ir neužmiganti: jos laisvi runner'iai tikrai gali imti darbą."""
+        """Awake and not being suspended: its free runners really can take work."""
         return self.state[name].awake and not self._going_to_sleep(name, now)
 
     def _waking(self, name: str, now: datetime) -> bool:
@@ -160,7 +160,7 @@ class Controller:
         self.served_since = {k: v for k, v in self.served_since.items() if k in present}
 
     def _fresh(self, obs: Observation, now: datetime) -> List[QueuedJob]:
-        """Job'ai, kuriuos GitHub dar gali atiduoti (žr. Settings.stale_queue)."""
+        """Jobs that GitHub may still hand out (see Settings.stale_queue)."""
         return [
             j
             for j in obs.queued
@@ -170,9 +170,9 @@ class Controller:
         ]
 
     def sleep_failed(self, name: str, now: datetime) -> bool:
-        """Užmigdymas nepavyko (SSH klaida ar mašina atsisakė). Mašina vėl laikoma
-        naudojama, tuščiosios eigos laikas skaičiuojamas iš naujo. Grąžina True, kai
-        nepavyksta jau trečią kartą iš eilės — tada verta pranešti."""
+        """Suspending failed (SSH error, or the machine refused). The machine counts as in
+        use again and its idle time starts over. Returns True on the third failure in a
+        row, when it is worth an alert."""
         s = self.state[name]
         s.sleep_sent = None
         s.last_busy = now
@@ -189,12 +189,12 @@ class Controller:
         s.wake_sent = now
         s.wake_attempts = 1
         if s.sleep_sent is not None:
-            # Pažadinama ką tik užmigdyta: tuščiosios eigos laikas skaičiuojamas iš naujo.
+            # Waking a machine that was just suspended: its idle time starts over.
             s.sleep_sent = None
             s.last_busy = now
         actions.append(Action("wake", m.name, reason))
 
-    # --- sprendimas -------------------------------------------------------------------
+    # --- decision --------------------------------------------------------------------
 
     def step(self, obs: Observation, now: datetime) -> List[Action]:
         actions: List[Action] = []
@@ -212,7 +212,7 @@ class Controller:
             runners = self._runners_of(m, obs)
             awake = any(r.online for r in runners)
             if awake and not s.awake:
-                # Ką tik pabudo: tuščiosios eigos laikas skaičiuojamas nuo pabudimo.
+                # Just woke up: idle time counts from now.
                 s.last_busy = now
                 s.wake_sent = None
                 s.wake_attempts = 0
@@ -228,8 +228,8 @@ class Controller:
             s.awake = awake
             if awake:
                 s.last_online = now
-                # Pabudusiai mašinai senas pažadinimas nebeaktualus — kitaip, kai ji vėliau
-                # užmigtų, valdiklis ją tuoj pat žadintų „pakartotinai“.
+                # An old wake no longer matters once the machine is awake; otherwise, when it
+                # later went to sleep, the controller would at once wake it "again".
                 if s.wake_sent is not None and now - s.wake_sent >= self.settings.wake_timeout:
                     s.wake_sent = None
                     s.wake_attempts = 0
@@ -243,14 +243,14 @@ class Controller:
                 if s.wake_attempts < self.settings.wake_attempts and not self.dry_run:
                     s.wake_sent = now
                     s.wake_attempts += 1
-                    actions.append(Action("wake", m.name, "pakartotinai: anksčiau nepabudo"))
+                    actions.append(Action("wake", m.name, "again: did not wake up before"))
                 else:
                     s.wake_sent = None
                     s.wake_attempts = 0
                     s.failed_until = now + self.settings.failed_backoff
                     s.weekly_pending = False
                     if not self.dry_run:
-                        self._alert(s, m.name, f"nepabudo po {self.settings.wake_attempts} bandymų", now, actions)
+                        self._alert(s, m.name, f"did not wake up after {self.settings.wake_attempts} attempts", now, actions)
 
     def _wake_for_queue(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
         demand: Dict[Tuple[str, FrozenSet[str]], int] = {}
@@ -291,7 +291,7 @@ class Controller:
                 if missing <= 0:
                     break
                 missing -= slots
-                self._send_wake(m, f"eilėje {demand[key]} job'ai su `{labels}`", now, actions)
+                self._send_wake(m, f"{demand[key]} queued job(s) with `{labels}`", now, actions)
 
     def _weekly(self, now: datetime, actions: List[Action]) -> None:
         for m in self.machines:
@@ -301,7 +301,7 @@ class Controller:
             if s.failed_until is not None and now < s.failed_until:
                 continue
             if s.last_online is None or now - s.last_online >= self.settings.weekly:
-                self._send_wake(m, "savaitinis: runner'iai turi prisijungti", now, actions)
+                self._send_wake(m, "weekly: the runners must connect", now, actions)
                 s.weekly_pending = True
 
     def _sleep_idle(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
@@ -325,4 +325,4 @@ class Controller:
             s.wake_sent = None
             s.wake_attempts = 0
             idle_min = int((now - s.last_busy).total_seconds() // 60)
-            actions.append(Action("sleep", m.name, f"be darbo {idle_min} min"))
+            actions.append(Action("sleep", m.name, f"idle for {idle_min} min"))

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Paruošia vieną CI mašiną valdikliui: rack-sleep, sudoers eilutė, ribotas Orange Pi
-# raktas, Wake-on-LAN. Paleidžiama pačioje mašinoje:
+# Prepares one CI machine for the controller: rack-sleep, a sudoers line, the controller's
+# restricted key, Wake-on-LAN. Run on the machine itself:
 #
 #   sudo bash install.sh --user rackctl --ci-user runner --pubkey /tmp/rackctl.pub [--iface eno1]
 #
-# --ci-user — paskyra, kuri vykdo CI job'us: jai raktas niekada neduodamas.
-# Kartojant nieko nedubliuoja. BIOS'e Wake-on-LAN įjungiamas ranka (docs/design.md).
+# --ci-user is the account that runs CI jobs: it never gets the key.
+# Running it again duplicates nothing. Wake-on-LAN is enabled in the BIOS by hand
+# (docs/design.md).
 set -euo pipefail
 
 USER_NAME=""
@@ -18,35 +19,35 @@ while [ $# -gt 0 ]; do
     --ci-user) CI_USER="$2"; shift 2 ;;
     --pubkey) PUBKEY="$2"; shift 2 ;;
     --iface) IFACE="$2"; shift 2 ;;
-    *) echo "nežinomas argumentas: $1" >&2; exit 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-die() { echo "klaida: $*" >&2; exit 1; }
-[ "$(id -u)" -eq 0 ] || die "paleisti su sudo"
-[ -n "$USER_NAME" ] || die "nenurodytas --user"
-id "$USER_NAME" >/dev/null 2>&1 || die "--user turi būti esama paskyra"
-[ -n "$CI_USER" ] || die "nenurodytas --ci-user (paskyra, kuri vykdo CI job'us)"
-id "$CI_USER" >/dev/null 2>&1 || die "--ci-user turi būti esama paskyra (ta, kuri vykdo CI job'us)"
-# Lyginama pagal UID: tas pats naudotojas gali turėti kelis vardus.
-[ "$(id -u "$USER_NAME")" != "$(id -u "$CI_USER")" ] || die "--user negali būti $CI_USER: ta paskyra vykdo CI kodą"
-[ -f "$PUBKEY" ] || die "--pubkey failas nerastas"
-[ "$(grep -c . "$PUBKEY")" -eq 1 ] || die "--pubkey faile turi būti lygiai vienas raktas"
-grep -qE '^ssh-(ed25519|rsa) ' "$PUBKEY" || die "--pubkey nėra viešasis SSH raktas"
-[ -e "/sys/class/net/$IFACE" ] || die "sąsajos $IFACE nėra"
+die() { echo "error: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "run with sudo"
+[ -n "$USER_NAME" ] || die "--user is missing"
+id "$USER_NAME" >/dev/null 2>&1 || die "--user must be an existing account"
+[ -n "$CI_USER" ] || die "--ci-user is missing (the account that runs CI jobs)"
+id "$CI_USER" >/dev/null 2>&1 || die "--ci-user must be an existing account (the one that runs CI jobs)"
+# Compared by UID: one user can have several names.
+[ "$(id -u "$USER_NAME")" != "$(id -u "$CI_USER")" ] || die "--user cannot be $CI_USER: that account runs CI code"
+[ -f "$PUBKEY" ] || die "--pubkey file not found"
+[ "$(grep -c . "$PUBKEY")" -eq 1 ] || die "--pubkey file must hold exactly one key"
+grep -qE '^ssh-(ed25519|rsa) ' "$PUBKEY" || die "--pubkey is not an SSH public key"
+[ -e "/sys/class/net/$IFACE" ] || die "no interface $IFACE"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-# 1. Užmigdymo komanda.
+# 1. The suspend command.
 install -o root -g root -m 0755 "$HERE/rack-sleep" /usr/local/sbin/rack-sleep
 
-# 2. sudo be slaptažodžio — tik šiai komandai. Tikrinama prieš padedant į vietą.
+# 2. sudo without a password, for this command only. Checked before it is put in place.
 SUDOERS_TMP="$(mktemp)"
 echo "$USER_NAME ALL=(root) NOPASSWD: /usr/local/sbin/rack-sleep" > "$SUDOERS_TMP"
-visudo -cf "$SUDOERS_TMP" >/dev/null || die "sudoers eilutė netinkama"
+visudo -cf "$SUDOERS_TMP" >/dev/null || die "invalid sudoers line"
 install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/rack-sleep
 rm -f "$SUDOERS_TMP"
 
-# 3. Orange Pi raktas, ribotas viena komanda.
+# 3. The controller's key, restricted to one command.
 HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$HOME_DIR/.ssh"
 AUTH="$HOME_DIR/.ssh/authorized_keys"
@@ -55,11 +56,11 @@ chown "$USER_NAME:$USER_NAME" "$AUTH"
 chmod 0600 "$AUTH"
 KEY="$(awk '{print $1" "$2}' "$PUBKEY")"
 WANT="command=\"sudo -n /usr/local/sbin/rack-sleep\",restrict $KEY rackctl"
-# Bet kuri kita eilutė su tuo pačiu raktu (pvz. įrašyta ranka bandant, be apribojimo)
-# pašalinama: šis raktas niekada neturi duoti pilno shell'o.
+# Any other line with the same key (say, added by hand while testing, without the
+# restriction) is removed: this key must never give a full shell.
 FILTERED="$(mktemp)"
 grep -vF "$KEY" "$AUTH" > "$FILTERED" || true
-# Paskutinė eilutė be naujos eilutės simbolio prilipdytų mūsų eilutę prie svetimo rakto.
+# A last line without a newline would glue our line onto someone else's key.
 if [ -s "$FILTERED" ] && [ -n "$(tail -c1 "$FILTERED")" ]; then
   echo >> "$FILTERED"
 fi
@@ -69,7 +70,7 @@ if ! cmp -s "$FILTERED" "$AUTH"; then
 fi
 rm -f "$FILTERED"
 
-# 4. Wake-on-LAN kiekvieno paleidimo metu (nustatymas po perkrovimo dingsta).
+# 4. Wake-on-LAN on every boot (the setting is lost on reboot).
 command -v ethtool >/dev/null || apt-get install -y -q ethtool
 cat > /etc/systemd/system/wol@.service <<'UNIT'
 [Unit]
@@ -85,6 +86,6 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now "wol@$IFACE.service" >/dev/null
-ethtool "$IFACE" | grep -qE '^[[:space:]]*Wake-on:[[:space:]]*g$' || die "Wake-on-LAN neįsijungė ($IFACE)"
+ethtool "$IFACE" | grep -qE '^[[:space:]]*Wake-on:[[:space:]]*g$' || die "Wake-on-LAN did not turn on ($IFACE)"
 
-echo "paruošta: $USER_NAME, $IFACE (Wake-on: g)"
+echo "ready: $USER_NAME, $IFACE (Wake-on: g)"

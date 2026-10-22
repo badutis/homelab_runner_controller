@@ -1,7 +1,7 @@
-"""Valdiklio paleidimas: `python3 -m rackctl /etc/rackctl/config.json`.
+"""Running the controller: `python3 -m rackctl /etc/rackctl/config.json`.
 
-Kas `poll_seconds` klausia GitHub, perduoda tai `Controller.step` ir įvykdo veiksmus.
-Kol `dry_run` yra `true` (numatyta), veiksmai tik užrašomi į žurnalą.
+Every `poll_seconds` it asks GitHub, passes the answer to `Controller.step` and carries
+out the actions. While `dry_run` is `true` (the default), actions are only logged.
 """
 
 import json
@@ -55,10 +55,10 @@ def sources_from(cfg: dict) -> List[Source]:
     ]
 
 
-# --- būsena diske ---------------------------------------------------------------------
-# Tik tai, ko negalima sužinoti iš GitHub: kada mašina paskutinį kartą buvo prisijungusi
-# (14 dienų taisyklė) ir iki kada laikoma pabudusi po savaitinio pažadinimo. Rašoma tik
-# pasikeitus, todėl SD kortelei tai keli įrašai per dieną.
+# --- state on disk --------------------------------------------------------------------
+# Only what cannot be learned from GitHub: when each machine was last online (the 14-day
+# rule) and until when it is held awake after a weekly wake. Written only on change, so
+# the SD card sees a few writes a day.
 
 PERSISTED = ("last_online", "hold_until")
 
@@ -74,7 +74,7 @@ def _aware(value: object) -> Optional[datetime]:
 
 
 def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
-    """Sugadintas ar svetimos formos failas — tas pats, kas jokio failo."""
+    """A damaged or foreign file counts the same as no file."""
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
@@ -108,7 +108,7 @@ def save_state(path: str, data: Dict[str, Dict[str, str]]) -> None:
     os.replace(tmp, path)
 
 
-# --- metrikos stebėjimui ------------------------------------------------------------
+# --- metrics for monitoring -----------------------------------------------------------
 
 
 class Metrics:
@@ -151,8 +151,8 @@ class Metrics:
             queued[key] = queued.get(key, 0) + 1
         for key, n in sorted(queued.items()):
             lines.append(f'rackctl_queued_jobs{{labels="{key}"}} {n}')
-        # Kiek laukia seniausias eilės job'as: pranešimui „laukia per ilgai“ eilės ilgio
-        # neužtenka — nuolat judanti eilė irgi ne tuščia.
+        # How long the oldest queued job has waited: the queue length is not enough for a
+        # "waiting too long" alert, because a queue that keeps moving is not empty either.
         lines += ["# TYPE rackctl_queued_oldest_seconds gauge"]
         oldest: Dict[str, float] = {}
         now = datetime.now(timezone.utc)
@@ -205,10 +205,10 @@ def execute(a: Action, by_name: Dict[str, Machine], cfg: dict) -> str:
     m = by_name[a.machine]
     if a.kind == "wake":
         act.wake(m, cfg["broadcast"])
-        return "paketas išsiųstas"
+        return "packet sent"
     if a.kind == "sleep":
         return act.put_to_sleep(m, cfg["ssh_key"], cfg["known_hosts"])
-    return "užrašyta"
+    return "logged"
 
 
 def run(cfg: dict) -> None:
@@ -217,7 +217,7 @@ def run(cfg: dict) -> None:
     dry_run = bool(cfg["dry_run"])
     settings = Settings(idle=timedelta(minutes=cfg["idle_minutes"]))
     if dry_run:
-        # Stebėjimo režime mašina neužmiega, todėl tas pats „migdyčiau“ kartotųsi dažnai.
+        # In dry run the machine never goes to sleep, so the same "would suspend" would repeat often.
         settings = Settings(idle=settings.idle, sleep_retry=timedelta(hours=1))
     ctl = Controller(machines=machines, settings=settings, dry_run=dry_run)
     for name, fields in load_state(cfg["state_file"]).items():
@@ -232,18 +232,18 @@ def run(cfg: dict) -> None:
     saved = snapshot(ctl.state)
     last_poll: Optional[datetime] = None
     obs: Optional[Observation] = None
-    log.info("pradėta: %d mašinos, dry_run=%s", len(machines), dry_run)
+    log.info("started: %d machines, dry_run=%s", len(machines), dry_run)
 
     while True:
         now = datetime.now(timezone.utc)
         try:
             pause = gh.backoff_until()
             if pause is not None and pause > now:
-                log.warning("GitHub limitas beveik baigėsi; laukiama iki %s", pause.isoformat())
+                log.warning("GitHub limit nearly used up; waiting until %s", pause.isoformat())
             else:
                 obs = gh.observe()
                 for source, err in gh.errors.items():
-                    log.warning("šaltinis %s neperskaitytas: %s", source, err)
+                    log.warning("source %s not read: %s", source, err)
                 if last_poll is not None:
                     elapsed = min((now - last_poll).total_seconds(), 2 * cfg["poll_seconds"])
                     for r in obs.runners:
@@ -258,23 +258,23 @@ def run(cfg: dict) -> None:
                         continue
                     try:
                         result = execute(a, by_name, cfg)
-                    except Exception as e:  # noqa: BLE001 — vienos mašinos klaida nestabdo kitų
-                        result = f"klaida: {e!r}"
+                    except Exception as e:  # noqa: BLE001 — an error on one machine does not stop the others
+                        result = f"error: {e!r}"
                     log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
                     if a.kind == "sleep" and not result.startswith(act.SLEEP_OK):
                         counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
                         if ctl.sleep_failed(a.machine, now):
-                            log.error("alert %s: neužmiega jau 3 kartus iš eilės — %s", a.machine, result)
+                            log.error("alert %s: failed to suspend 3 times in a row — %s", a.machine, result)
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)
                     saved = current
-        except Exception:  # noqa: BLE001 — ciklas nekrenta: kitas bandymas po poll_seconds
-            log.exception("ciklo klaida")
+        except Exception:  # noqa: BLE001 — the loop never dies: next try after poll_seconds
+            log.exception("loop error")
         try:
             metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run)
         except Exception:  # noqa: BLE001
-            log.exception("metrikų klaida")
+            log.exception("metrics error")
         time.sleep(cfg["poll_seconds"])
 
 
@@ -289,7 +289,7 @@ def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
 def main(argv: List[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if len(argv) != 2:
-        print("naudojimas: python3 -m rackctl /etc/rackctl/config.json", file=sys.stderr)
+        print("usage: python3 -m rackctl /etc/rackctl/config.json", file=sys.stderr)
         return 2
     run(load_config(argv[1]))
     return 0
