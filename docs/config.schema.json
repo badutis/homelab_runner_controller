@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/badutis/wakeci/main/docs/config.schema.json",
+  "title": "WakeCI configuration",
+  "description": "config.json of the WakeCI controller. `wakeci check` applies these rules and a few more (unique machine names, distinct files, valid MAC and host).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ssh_key", "sources", "machines"],
+  "properties": {
+    "$schema": {"type": "string", "description": "Path or URL of this schema, for editors."},
+    "config_version": {"type": "integer", "enum": [1], "description": "Format version of this file."},
+    "dry_run": {"type": "boolean", "default": true, "description": "Log decisions without sending packets or SSH commands."},
+    "poll_seconds": {"type": "integer", "minimum": 1, "default": 20, "description": "How often GitHub is polled."},
+    "idle_minutes": {"type": "integer", "minimum": 1, "default": 30, "description": "Idle time of all runners of a machine before it is suspended."},
+    "broadcast": {"type": "string", "default": "255.255.255.255", "description": "IPv4 broadcast address for Wake-on-LAN packets."},
+    "metrics_listen": {"type": "string", "pattern": "^.+:[0-9]{1,5}$", "default": "0.0.0.0:9105", "description": "<address>:<port> of the /metrics endpoint."},
+    "state_file": {"type": "string", "pattern": "^/", "default": "/var/lib/wakeci/last-online.json"},
+    "ssh_key": {"$ref": "#/$defs/etcFile", "description": "Private key used for wakeci-sleep."},
+    "known_hosts": {"$ref": "#/$defs/etcFile", "default": "/etc/wakeci/known_hosts"},
+    "notify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url_file", "format"],
+      "properties": {
+        "url_file": {"$ref": "#/$defs/etcFile", "description": "File holding the webhook URL (a secret)."},
+        "format": {"type": "string", "enum": ["discord", "slack", "json"]},
+        "after_minutes": {"type": "number", "minimum": 0, "default": 10},
+        "repeat_hours": {"type": "number", "exclusiveMinimum": 0, "default": 6}
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runners_path", "repos", "token_file"],
+        "properties": {
+          "runners_path": {"type": "string", "pattern": "^(repos/[^/\\s]+/[^/\\s]+|orgs/[^/\\s]+)$"},
+          "repos": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"}},
+          "token_file": {"$ref": "#/$defs/etcFile"}
+        }
+      }
+    },
+    "machines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "mac", "host", "runner_prefixes"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "mac": {"type": "string", "pattern": "^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$"},
+          "host": {"type": "string", "minLength": 1},
+          "ssh_user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*$", "description": "Defaults to name."},
+          "runner_prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "rank": {"type": "integer", "default": 1, "description": "Lower is woken first."}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "etcFile": {"type": "string", "pattern": "^/etc/wakeci/[A-Za-z0-9][A-Za-z0-9._-]*$"}
+  }
+}

@@ -1,4 +1,6 @@
 {
+  "$schema": "https://raw.githubusercontent.com/badutis/wakeci/main/docs/config.schema.json",
+  "config_version": 1,
   "dry_run": true,
   "poll_seconds": 20,
   "idle_minutes": 30,
