@@ -65,12 +65,16 @@ PRIVATE_NETS = [
 ]
 # A trailing dot ends a sentence and is allowed; a dot followed by a digit is not.
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d)(?!\.\d)")
-IPV6 = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]:)(?<!::)((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I)
+IPV6 = re.compile(
+    r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]:)(?<!::)((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I
+)
 # A run of six or more hex pairs: the text right before a MAC may itself look like a
 # pair ("mac:fc:..."), so the run is reported unless some six-pair window of it is allowed.
 # Not after a 3–4 digit group and a colon: that is the tail of an IPv6 address.
 MAC_RUN = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]{3}:)((?:[0-9A-Fa-f]{2}[:-]){5,}[0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
-MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f])(?!\.[0-9A-Fa-f])")
+MAC_DOTTED = re.compile(
+    r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f])(?!\.[0-9A-Fa-f])"
+)
 MAC_ALLOWED = re.compile(r"^(00005e0053[0-9a-f]{2}|f{12}|0{11}[0-9a-f])$")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_ALLOWED = re.compile(r"(@users\.noreply\.github\.com|^noreply@github\.com|@example\.(com|org|net))$", re.I)
@@ -155,8 +159,10 @@ def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
     if not shas:
         return
     out = subprocess.run(
-        ["git", "cat-file", "--batch"], input="\n".join(shas).encode() + b"\n",
-        check=True, capture_output=True,
+        ["git", "cat-file", "--batch"],
+        input="\n".join(shas).encode() + b"\n",
+        check=True,
+        capture_output=True,
     ).stdout
     pos = 0
     while pos < len(out):

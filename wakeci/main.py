@@ -32,7 +32,8 @@ def load_config(path: str) -> dict:
     if type(version) is not int or version not in SUPPORTED_CONFIG_VERSIONS:
         raise ValueError(
             f"{path}: config_version {version!r} is not supported by this WakeCI "
-            f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})")
+            f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})"
+        )
     cfg.setdefault("dry_run", True)
     cfg.setdefault("poll_seconds", 20)
     cfg.setdefault("idle_minutes", 30)
@@ -294,9 +295,13 @@ def run(cfg: dict) -> None:
             notify(msg)
 
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
-    notify(notifier.event(
-        "start", f"wakeci {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
-        datetime.now(timezone.utc)))
+    notify(
+        notifier.event(
+            "start",
+            f"wakeci {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
+            datetime.now(timezone.utc),
+        )
+    )
 
     while True:
         now = datetime.now(timezone.utc)
@@ -305,10 +310,16 @@ def run(cfg: dict) -> None:
             pause = gh.backoff_until()
             if pause is not None and pause > now:
                 log.warning("GitHub limit nearly used up; waiting until %s", pause.isoformat())
-                notify(notifier.problem(
-                    "limit", f"wakeci: GitHub request limit nearly used up; not polling until "
-                    f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
-                    "meanwhile.", now, wait=False))
+                notify(
+                    notifier.problem(
+                        "limit",
+                        f"wakeci: GitHub request limit nearly used up; not polling until "
+                        f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
+                        "meanwhile.",
+                        now,
+                        wait=False,
+                    )
+                )
             else:
                 notify(notifier.clear("limit", "wakeci: GitHub request limit reset; polling again.", now))
                 obs = gh.observe()
@@ -318,9 +329,14 @@ def run(cfg: dict) -> None:
                     key = f"source:{src.runners_path}"
                     err = gh.errors.get(src.runners_path)
                     if err is not None:
-                        notify(notifier.problem(
-                            key, f"wakeci: GitHub source {src.runners_path} cannot be read: {err}. "
-                            "No machine is suspended while this lasts (check its token).", now))
+                        notify(
+                            notifier.problem(
+                                key,
+                                f"wakeci: GitHub source {src.runners_path} cannot be read: {err}. "
+                                "No machine is suspended while this lasts (check its token).",
+                                now,
+                            )
+                        )
                     else:
                         notify(notifier.clear(key, f"wakeci: GitHub source {src.runners_path} is readable again.", now))
                 if last_poll is not None:
@@ -346,9 +362,13 @@ def run(cfg: dict) -> None:
                         counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
                         if ctl.sleep_failed(a.machine, now):
                             log.error("alert %s: failed to suspend 3 times in a row — %s", a.machine, result)
-                            notify(notifier.event(
-                                f"sleep:{a.machine}",
-                                f"wakeci: {a.machine} failed to suspend 3 times in a row: {result}.", now))
+                            notify(
+                                notifier.event(
+                                    f"sleep:{a.machine}",
+                                    f"wakeci: {a.machine} failed to suspend 3 times in a row: {result}.",
+                                    now,
+                                )
+                            )
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)

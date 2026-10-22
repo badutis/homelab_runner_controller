@@ -34,8 +34,19 @@ from .notify import FORMATS
 
 CONFIG_VERSION = 1
 TOP_KEYS = {
-    "$schema", "config_version", "dry_run", "poll_seconds", "idle_minutes", "broadcast",
-    "metrics_listen", "state_file", "ssh_key", "known_hosts", "notify", "sources", "machines",
+    "$schema",
+    "config_version",
+    "dry_run",
+    "poll_seconds",
+    "idle_minutes",
+    "broadcast",
+    "metrics_listen",
+    "state_file",
+    "ssh_key",
+    "known_hosts",
+    "notify",
+    "sources",
+    "machines",
 }
 SOURCE_KEYS = {"runners_path", "repos", "token_file"}
 MACHINE_KEYS = {"name", "mac", "host", "ssh_user", "runner_prefixes", "rank"}
@@ -75,7 +86,7 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
         raw = json.load(f)
     no_unknown_keys("the configuration", raw, TOP_KEYS)
     if "config_version" not in raw:
-        warnings.append(f"no config_version: read as version {CONFIG_VERSION}; add \"config_version\": {CONFIG_VERSION}")
+        warnings.append(f'no config_version: read as version {CONFIG_VERSION}; add "config_version": {CONFIG_VERSION}')
     cfg = main.load_config(path)
     out = []
     if not isinstance(cfg["dry_run"], bool):
@@ -118,7 +129,10 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
             raise ValueError(f"{where}.repos must be a non-empty list of <owner>/<repo>")
         token = in_etc(f"{where}.token_file", s.get("token_file"))
         # Several sources may share one token file; it must only not be another kind of file.
-        if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
+        if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in (
+            "config.json",
+            os.path.basename(used["ssh_key"]) + ".pub",
+        ):
             raise ValueError(f"{where}.token_file must not reuse another file's name")
         out.append(("token", token))
 

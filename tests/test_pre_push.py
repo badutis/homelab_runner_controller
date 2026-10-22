@@ -18,9 +18,16 @@ class PrePushHookTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp)
         # Hermetic: none of the user's git configuration (a global core.hooksPath would put
         # the hook into the user's real hooks directory).
-        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_COMMITTER_NAME="t",
-                        GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com",
-                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", HOME=self.tmp)
+        self.env = dict(
+            os.environ,
+            GIT_AUTHOR_NAME="t",
+            GIT_COMMITTER_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.com",
+            GIT_COMMITTER_EMAIL="t@example.com",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_CONFIG_NOSYSTEM="1",
+            HOME=self.tmp,
+        )
         self.remote = os.path.join(self.tmp, "remote.git")
         self.work = os.path.join(self.tmp, "work")
         subprocess.run(["git", "init", "-q", "--bare", self.remote], check=True, env=self.env)
@@ -52,8 +59,12 @@ class PrePushHookTest(unittest.TestCase):
         return self.run_cmd(["git", "push", "-q", "origin", *refs])
 
     def remote_sha(self, ref):
-        out = subprocess.run(["git", "--git-dir", self.remote, "rev-parse", "--verify", "-q", ref],
-                             capture_output=True, text=True, env=self.env)
+        out = subprocess.run(
+            ["git", "--git-dir", self.remote, "rev-parse", "--verify", "-q", ref],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
         return out.stdout.strip() or None
 
     def test_clean_push_goes_through(self):
@@ -112,8 +123,18 @@ class PrePushHookTest(unittest.TestCase):
         self.assertIsNone(self.remote_sha("refs/tags/outer"))
 
     def test_a_blob_pushed_as_a_tag_is_refused(self):
-        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=self.work, env=self.env,
-                              input=f"host {PRIV}\n".encode(), capture_output=True, check=True).stdout.decode().strip()
+        blob = (
+            subprocess.run(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=self.work,
+                env=self.env,
+                input=f"host {PRIV}\n".encode(),
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
         out = self.push(f"{blob}:refs/tags/blobtag")
         self.assertNotEqual(out.returncode, 0)
         self.assertIn(f"private address {PRIV}", out.stderr)

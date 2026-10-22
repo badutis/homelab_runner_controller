@@ -16,9 +16,24 @@ TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
 
 
 SUPPORTED = {
-    "$schema", "$id", "$ref", "$defs", "title", "description", "default", "type", "enum",
-    "pattern", "minLength", "minimum", "exclusiveMinimum", "minItems", "items",
-    "properties", "required", "additionalProperties",
+    "$schema",
+    "$id",
+    "$ref",
+    "$defs",
+    "title",
+    "description",
+    "default",
+    "type",
+    "enum",
+    "pattern",
+    "minLength",
+    "minimum",
+    "exclusiveMinimum",
+    "minItems",
+    "items",
+    "properties",
+    "required",
+    "additionalProperties",
 }
 
 

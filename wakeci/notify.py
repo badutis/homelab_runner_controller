@@ -151,8 +151,12 @@ class Outbox:
             if msg.resolved and key in notifier.problems:
                 self.pending[key] = (msg, now + self.delay, first)  # a short flap: wait it out
                 continue
-            copy = Message(key, f"{msg.text} (delayed: first failed {first:%Y-%m-%d %H:%M} UTC)",
-                           resolved=msg.resolved, problem=msg.problem)
+            copy = Message(
+                key,
+                f"{msg.text} (delayed: first failed {first:%Y-%m-%d %H:%M} UTC)",
+                resolved=msg.resolved,
+                problem=msg.problem,
+            )
             self.retrying[key] = (msg, first, copy)
             out.append(copy)
         return out
@@ -191,8 +195,15 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class Sender:
-    def __init__(self, url: str, fmt: str, user_agent: str, opener: Callable = _OPENER.open,
-                 timeout: float = 10.0, size: int = 100):
+    def __init__(
+        self,
+        url: str,
+        fmt: str,
+        user_agent: str,
+        opener: Callable = _OPENER.open,
+        timeout: float = 10.0,
+        size: int = 100,
+    ):
         if fmt not in FORMATS:
             raise ValueError(f"unknown notify format {fmt!r}")
         self._url = url

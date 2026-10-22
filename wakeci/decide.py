@@ -138,9 +138,7 @@ class Controller:
     def _waking(self, name: str, now: datetime) -> bool:
         s = self.state[name]
         return (
-            not self._usable(name, now)
-            and s.wake_sent is not None
-            and now - s.wake_sent < self.settings.wake_timeout
+            not self._usable(name, now) and s.wake_sent is not None and now - s.wake_sent < self.settings.wake_timeout
         )
 
     def _track_served(self, obs: Observation, now: datetime) -> None:
@@ -235,11 +233,7 @@ class Controller:
                     s.wake_attempts = 0
             if any(r.busy for r in runners):
                 s.last_busy = now
-            if (
-                not awake
-                and s.wake_sent is not None
-                and now - s.wake_sent >= self.settings.wake_timeout
-            ):
+            if not awake and s.wake_sent is not None and now - s.wake_sent >= self.settings.wake_timeout:
                 if s.wake_attempts < self.settings.wake_attempts and not self.dry_run:
                     s.wake_sent = now
                     s.wake_attempts += 1
@@ -250,7 +244,9 @@ class Controller:
                     s.failed_until = now + self.settings.failed_backoff
                     s.weekly_pending = False
                     if not self.dry_run:
-                        self._alert(s, m.name, f"did not wake up after {self.settings.wake_attempts} attempts", now, actions)
+                        self._alert(
+                            s, m.name, f"did not wake up after {self.settings.wake_attempts} attempts", now, actions
+                        )
 
     def _wake_for_queue(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
         demand: Dict[Tuple[str, FrozenSet[str]], int] = {}
@@ -276,13 +272,9 @@ class Controller:
                 if self._waking(m.name, now):
                     coming += slots
                 elif (
-                    self._usable(m.name, now)
-                    and s.woke_at is not None
-                    and now - s.woke_at < self.settings.wake_timeout
+                    self._usable(m.name, now) and s.woke_at is not None and now - s.woke_at < self.settings.wake_timeout
                 ):
-                    coming += sum(
-                        1 for r in self._runners_of(m, obs) if not r.online and can_take(r, probe)
-                    )
+                    coming += sum(1 for r in self._runners_of(m, obs) if not r.online and can_take(r, probe))
                 elif not self._usable(m.name, now) and (s.failed_until is None or now >= s.failed_until):
                     candidates.append((m, slots))
             missing = demand[key] - have - coming

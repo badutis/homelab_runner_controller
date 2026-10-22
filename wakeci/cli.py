@@ -73,7 +73,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg = controller.load_config(ns.config)
     if "config_version" not in cfg:
         logging.getLogger("wakeci").warning(
-            "%s has no config_version: read as version %d; add \"config_version\": %d",
-            ns.config, config_check.CONFIG_VERSION, config_check.CONFIG_VERSION)
+            '%s has no config_version: read as version %d; add "config_version": %d',
+            ns.config,
+            config_check.CONFIG_VERSION,
+            config_check.CONFIG_VERSION,
+        )
     controller.run(cfg)
     return 0

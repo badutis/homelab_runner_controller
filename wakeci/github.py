@@ -152,9 +152,7 @@ class GitHub:
         # without bound. The ETag of a run taken from memory is kept: otherwise its next
         # re-read would go without If-None-Match and count against the limit unchanged.
         kept_urls = tuple(f"{API}/{p}?" for p in self._kept)
-        self._cache = {
-            k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)
-        }
+        self._cache = {k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)}
         self._run_jobs = {k: v for k, v in self._run_jobs.items() if k in self._kept}
         return Observation(runners=tuple(runners), queued=tuple(queued), complete=complete)
 

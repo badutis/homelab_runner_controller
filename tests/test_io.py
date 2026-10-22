@@ -91,20 +91,29 @@ class FakeGitHub:
 
 ROUTES = {
     "repos/o/r/actions/runners": (
-        {"runners": [
-            {"name": "host1-a-1", "status": "online", "busy": True, "labels": [{"name": "self-hosted"}, {"name": "small"}]},
-            {"name": "host2-a-1", "status": "offline", "busy": False, "labels": [{"name": "large"}]},
-        ]},
+        {
+            "runners": [
+                {
+                    "name": "host1-a-1",
+                    "status": "online",
+                    "busy": True,
+                    "labels": [{"name": "self-hosted"}, {"name": "small"}],
+                },
+                {"name": "host2-a-1", "status": "offline", "busy": False, "labels": [{"name": "large"}]},
+            ]
+        },
         '"r1"',
     ),
     "repos/o/r/actions/runs?status=queued": ({"workflow_runs": [{"id": 7}]}, None),
     "repos/o/r/actions/runs?status=in_progress": ({"workflow_runs": []}, None),
     "repos/o/r/actions/runs/7/jobs": (
-        {"jobs": [
-            {"status": "queued", "labels": ["self-hosted", "pool", "large"]},
-            {"status": "queued", "labels": ["ubuntu-24.04"]},
-            {"status": "in_progress", "labels": ["self-hosted", "pool", "small"]},
-        ]},
+        {
+            "jobs": [
+                {"status": "queued", "labels": ["self-hosted", "pool", "large"]},
+                {"status": "queued", "labels": ["ubuntu-24.04"]},
+                {"status": "in_progress", "labels": ["self-hosted", "pool", "small"]},
+            ]
+        },
         None,
     ),
 }
@@ -114,7 +123,9 @@ class GitHubTest(unittest.TestCase):
     def test_observe(self):
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=FakeGitHub(ROUTES))
         obs = gh.observe()
-        self.assertEqual([(r.name, r.online, r.busy) for r in obs.runners], [("host1-a-1", True, True), ("host2-a-1", False, False)])
+        self.assertEqual(
+            [(r.name, r.online, r.busy) for r in obs.runners], [("host1-a-1", True, True), ("host2-a-1", False, False)]
+        )
         # Only queued jobs for our own runners; a job for a GitHub-hosted runner is not.
         self.assertEqual([q.labels for q in obs.queued], [frozenset({"self-hosted", "pool", "large"})])
         self.assertEqual({q.source for q in obs.queued} | {r.source for r in obs.runners}, {"repos/o/r"})
@@ -166,7 +177,9 @@ class ConfigTest(unittest.TestCase):
             for text in ("{", "[]", '{"host1": "2026-10-17"}', '{"host1": {"last_online": "yesterday"}}'):
                 f = Path(d) / "b.json"
                 f.write_text(text)
-                self.assertEqual(main.load_state(str(f)), {} if text in ("{", "[]", '{"host1": "2026-10-17"}') else {"host1": {}})
+                self.assertEqual(
+                    main.load_state(str(f)), {} if text in ("{", "[]", '{"host1": "2026-10-17"}') else {"host1": {}}
+                )
 
     def test_naive_time_in_state_is_read_as_utc(self):
         with tempfile.TemporaryDirectory() as d:
@@ -222,8 +235,14 @@ class GitHubResilienceTest(unittest.TestCase):
         self.assertEqual(len(gh.observe().queued), 1)
         # A runner took the job: the run is now in_progress and its job list changed.
         fake.routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
-        fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
-        fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": [{"status": "in_progress", "labels": ["self-hosted", "pool", "large"]}]}, None)
+        fake.routes["repos/o/r/actions/runs?status=in_progress"] = (
+            {"workflow_runs": [{"id": 7, "updated_at": "t2"}]},
+            None,
+        )
+        fake.routes["repos/o/r/actions/runs/7/jobs"] = (
+            {"jobs": [{"status": "in_progress", "labels": ["self-hosted", "pool", "large"]}]},
+            None,
+        )
         self.assertEqual(gh.observe().queued, ())
 
     def test_changed_in_progress_run_is_refetched(self):
@@ -233,7 +252,10 @@ class GitHubResilienceTest(unittest.TestCase):
         fake = FakeGitHub(routes)
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake)
         self.assertEqual(len(gh.observe().queued), 1)
-        fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
+        fake.routes["repos/o/r/actions/runs?status=in_progress"] = (
+            {"workflow_runs": [{"id": 7, "updated_at": "t2"}]},
+            None,
+        )
         fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": []}, None)
         self.assertEqual(gh.observe().queued, ())
 
@@ -265,7 +287,9 @@ class GitHubResilienceTest(unittest.TestCase):
         self.assertEqual(gh.backoff_until(), datetime.fromtimestamp(1792000000, timezone.utc))
 
     def test_created_at_is_parsed(self):
-        self.assertEqual(github.parse_time("2026-10-17T10:15:34Z"), datetime(2026, 10, 17, 10, 15, 34, tzinfo=timezone.utc))
+        self.assertEqual(
+            github.parse_time("2026-10-17T10:15:34Z"), datetime(2026, 10, 17, 10, 15, 34, tzinfo=timezone.utc)
+        )
         self.assertIsNone(github.parse_time("yesterday"))
 
 
@@ -280,11 +304,14 @@ class MetricsTest(unittest.TestCase):
 
         now = datetime.now(timezone.utc)
         q = frozenset({"self-hosted", "pool", "large"})
-        obs = Observation(runners=(), queued=(
-            QueuedJob(labels=q, since=now - timedelta(minutes=7)),
-            QueuedJob(labels=q, since=now - timedelta(minutes=1)),
-            QueuedJob(labels=q),
-        ))
+        obs = Observation(
+            runners=(),
+            queued=(
+                QueuedJob(labels=q, since=now - timedelta(minutes=7)),
+                QueuedJob(labels=q, since=now - timedelta(minutes=1)),
+                QueuedJob(labels=q),
+            ),
+        )
         m = main.Metrics()
         m.update(Controller(machines=()), {}, G(), {}, obs, True)
         line = [l for l in m.text.splitlines() if l.startswith("wakeci_queued_oldest_seconds")]
@@ -303,18 +330,21 @@ class MetricsTest(unittest.TestCase):
         m = main.Metrics()
         m.update(Controller(machines=()), {}, G(), {}, Observation(runners=(), queued=()), True)
         types = [l.split()[2:4] for l in m.text.splitlines() if l.startswith("# TYPE ")]
-        self.assertEqual(types, [
-            ["wakeci_machine_awake", "gauge"],
-            ["wakeci_machine_waking", "gauge"],
-            ["wakeci_actions_total", "counter"],
-            ["wakeci_runner_busy_seconds_total", "counter"],
-            ["wakeci_queued_jobs", "gauge"],
-            ["wakeci_queued_oldest_seconds", "gauge"],
-            ["wakeci_github_ok", "gauge"],
-            ["wakeci_github_remaining", "gauge"],
-            ["wakeci_dry_run", "gauge"],
-            ["wakeci_notify_failed_total", "counter"],
-        ])
+        self.assertEqual(
+            types,
+            [
+                ["wakeci_machine_awake", "gauge"],
+                ["wakeci_machine_waking", "gauge"],
+                ["wakeci_actions_total", "counter"],
+                ["wakeci_runner_busy_seconds_total", "counter"],
+                ["wakeci_queued_jobs", "gauge"],
+                ["wakeci_queued_oldest_seconds", "gauge"],
+                ["wakeci_github_ok", "gauge"],
+                ["wakeci_github_remaining", "gauge"],
+                ["wakeci_dry_run", "gauge"],
+                ["wakeci_notify_failed_total", "counter"],
+            ],
+        )
 
 
 if __name__ == "__main__":
