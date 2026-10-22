@@ -78,6 +78,19 @@ class CliTest(unittest.TestCase):
             self.assertEqual(code, 0, args)
             self.assertEqual(started.call_args[0][0]["config_version"], 1, args)
 
+    def test_the_old_form_with_a_missing_file_says_not_found(self):
+        with self.assertRaises(FileNotFoundError):
+            cli.main(["/nonexistent/wakeci.json"])
+
+    def test_run_warns_in_the_log_when_config_version_is_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+            del cfg["config_version"]
+            path = write(d, cfg)
+            with mock.patch.object(main, "run"), self.assertLogs("wakeci", level="WARNING") as logs:
+                cli.main(["run", path])
+        self.assertIn("no config_version", "\n".join(logs.output))
+
     def test_no_command_is_a_usage_error(self):
         code, _, err = run()
         self.assertEqual(code, 2)

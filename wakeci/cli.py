@@ -10,7 +10,6 @@ controller.
 
 import argparse
 import logging
-import os
 import sys
 from typing import List, Optional
 
@@ -56,8 +55,9 @@ def _check(path: str, paths: bool) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    # The form before subcommands: `python3 -m wakeci CONFIG`.
-    if len(args) == 1 and args[0] not in COMMANDS and not args[0].startswith("-") and os.path.isfile(args[0]):
+    # The form before subcommands: `python3 -m wakeci CONFIG` (a missing file then fails as
+    # "not found", like `wakeci run` does, rather than as an unknown command).
+    if len(args) == 1 and args[0] not in COMMANDS and not args[0].startswith("-"):
         args = ["run", args[0]]
     ns = _parser().parse_args(args)
     if ns.command == "version":
@@ -65,8 +65,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if ns.command == "check":
         return _check(ns.config, ns.paths)
-    from . import main as controller  # imported here: `check` and `version` need none of it
+    from . import main as controller
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    controller.run(controller.load_config(ns.config))
+    cfg = controller.load_config(ns.config)
+    if "config_version" not in cfg:
+        logging.getLogger("wakeci").warning(
+            "%s has no config_version: read as version %d; add \"config_version\": %d",
+            ns.config, config_check.CONFIG_VERSION, config_check.CONFIG_VERSION)
+    controller.run(cfg)
     return 0

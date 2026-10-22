@@ -1,0 +1,8 @@
+# The source distribution carries what the tests need, so they run from it too.
+include LICENSE README.md pyproject.toml
+graft docs
+graft controller
+graft machine
+graft scripts
+graft tests
+global-exclude __pycache__ *.py[co]

@@ -49,7 +49,7 @@ REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
 
 
 def in_etc(key: str, value) -> str:
-    if not isinstance(value, str) or os.path.dirname(value) != ETC or not FILE_NAME.match(os.path.basename(value)):
+    if not isinstance(value, str) or os.path.dirname(value) != ETC or not FILE_NAME.fullmatch(os.path.basename(value)):
         raise ValueError(f"{key} must be a file directly in {ETC}/ (letters, digits, '.', '_', '-')")
     return value
 
@@ -111,10 +111,10 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     for i, s in enumerate(sources):
         where = f"sources[{i}]"
         no_unknown_keys(where, s, SOURCE_KEYS)
-        if not RUNNERS_PATH.match(str(s.get("runners_path", ""))):
+        if not RUNNERS_PATH.fullmatch(str(s.get("runners_path", ""))):
             raise ValueError(f"{where}.runners_path must be repos/<owner>/<repo> or orgs/<org>")
         repos = s.get("repos")
-        if not isinstance(repos, list) or not repos or not all(REPO.match(str(r)) for r in repos):
+        if not isinstance(repos, list) or not repos or not all(REPO.fullmatch(str(r)) for r in repos):
             raise ValueError(f"{where}.repos must be a non-empty list of <owner>/<repo>")
         token = in_etc(f"{where}.token_file", s.get("token_file"))
         # Several sources may share one token file; it must only not be another kind of file.
@@ -162,9 +162,12 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
             ipaddress.ip_address(m.host)
         except ValueError:
             # Not starting with "-": the host is passed to ssh-keyscan and ssh.
-            if not HOST_NAME.match(m.host):
+            if not HOST_NAME.fullmatch(m.host):
                 raise ValueError(f"machine {m.name}: host must be an address or a host name")
-        if not re.match(r"^[a-z_][a-z0-9_-]*$", m.ssh_user):
+        rank = next((x.get("rank", 1) for x in cfg["machines"] if x.get("name") == m.name), 1)
+        if isinstance(rank, bool) or not isinstance(rank, int):
+            raise ValueError(f"machine {m.name}: rank must be a whole number")
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]*", m.ssh_user):
             raise ValueError(f"machine {m.name}: ssh_user is not a valid user name")
         out.append(("host", m.host))
     return out
@@ -175,11 +178,14 @@ def paths_main(argv: List[str]) -> int:
     if len(argv) != 1:
         print("usage: check_config.py CONFIG.json", file=sys.stderr)
         return 2
+    warnings: List[str] = []
     try:
-        lines = check(argv[0])
+        lines = check(argv[0], warnings)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         print(f"invalid configuration {argv[0]}: {e!r}", file=sys.stderr)
         return 1
+    for w in warnings:
+        print(f"warning: {w}", file=sys.stderr)
     for kind, value in lines:
         print(f"{kind}\t{value}")
     return 0

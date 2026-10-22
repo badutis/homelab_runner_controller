@@ -28,7 +28,6 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/badutis/wakeci"
 Issues = "https://github.com/badutis/wakeci/issues"
-Changelog = "https://github.com/badutis/wakeci/blob/main/CHANGELOG.md"
 
 [project.scripts]
 wakeci = "wakeci.cli:main"

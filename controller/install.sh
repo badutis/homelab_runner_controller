@@ -131,6 +131,11 @@ fi
 # --- the configuration, checked before anything changes ------------------------------------
 if [ -n "$CONFIG" ]; then
   "$PY" "$HERE/check_config.py" "$CONFIG" >/dev/null || die "configuration rejected, nothing changed"
+elif [ -f "$ETC/config.json" ]; then
+  # A re-run without --config keeps the installed configuration: this version's checker must
+  # accept it before the code is replaced (a newer checker can be stricter).
+  "$PY" "$HERE/check_config.py" "$ETC/config.json" >/dev/null \
+    || die "$ETC/config.json is not accepted by this version; fix it (or pass --config), nothing changed"
 fi
 
 # --- the account -------------------------------------------------------------------------

@@ -30,8 +30,10 @@ wakeci version          print the version
 unknown keys, so a typo such as `idle_minute` is reported instead of ignored. Run it
 before every deploy; `deploy.sh` and `install.sh` run it too.
 
-Installed with `pip install .` (or `pipx install .`) the command is on your path. In an
-installed controller, the unit runs `python3 -m wakeci run /etc/wakeci/config.json`.
+Installed with `pip install .` (or `pipx install .`) the command is on your path, for
+checking configurations on your own computer. The package holds only the Python code: the
+controller host is set up with `controller/deploy.sh` and `controller/install.sh` (below),
+and its unit runs `python3 -m wakeci run /etc/wakeci/config.json`.
 
 ## Layout
 
@@ -172,7 +174,8 @@ Start from `controller/config.example.json`. Its first two keys are worth keepin
   while you type;
 - `"config_version": 1` is the format version. A future incompatible format raises it, and
   WakeCI refuses a version it does not know instead of misreading the file. Without it
-  the file is read as version 1, with a warning.
+  the file is read as version 1; `wakeci check`, the installer and the controller's log
+  warn about it.
 
 | Key | Default | Meaning |
 |---|---|---|

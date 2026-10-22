@@ -29,7 +29,7 @@ def load_config(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     version = cfg.get("config_version", 1)
-    if version not in SUPPORTED_CONFIG_VERSIONS:
+    if type(version) is not int or version not in SUPPORTED_CONFIG_VERSIONS:
         raise ValueError(
             f"{path}: config_version {version!r} is not supported by this WakeCI "
             f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})")
