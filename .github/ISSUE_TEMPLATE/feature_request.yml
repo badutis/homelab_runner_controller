@@ -1,0 +1,20 @@
+name: Feature request
+description: Something WakeCI should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Number of machines, how they are powered (Wake-on-LAN, IPMI, Redfish, VMs, …), GitHub.com or Enterprise Server.
