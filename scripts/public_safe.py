@@ -10,7 +10,9 @@ a recognisable shape:
 
 It checks every file in the index. With ``--history`` it also checks every version of
 every file in the history of ``HEAD``, every commit message, author and committer, and
-every tag's message and tagger.
+every tag's message and tagger. ``--rev SHA`` scans that commit's history instead of
+``HEAD`` (and skips the index): the pre-push hook (``scripts/install-hooks.sh``) runs it
+for each commit about to be pushed, so a leak is stopped before it reaches GitHub.
 
 Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 198.51.100.0/24, 203.0.113.0/24; RFC 3849: 2001:db8::/32), the documentation MAC range
@@ -135,9 +137,9 @@ def index_files() -> Iterable[Tuple[str, str]]:
             yield path, text
 
 
-def history_blobs() -> Iterable[Tuple[str, str]]:
+def history_blobs(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
     seen = set()
-    for line in git("rev-list", "--objects", "HEAD").decode(errors="replace").splitlines():
+    for line in git("rev-list", "--objects", rev, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         if not path or path in SELF or sha in seen:
             continue
@@ -149,9 +151,9 @@ def history_blobs() -> Iterable[Tuple[str, str]]:
             yield f"{path}@{sha[:7]}", text
 
 
-def commits() -> Iterable[Tuple[str, str]]:
+def commits(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
     sep = "\x1e"
-    log = git("log", "HEAD", f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode(errors="replace")
+    log = git("log", rev, f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode(errors="replace")
     for entry in log.split(sep):
         entry = entry.strip("\n")
         if not entry:
@@ -176,12 +178,23 @@ def tags() -> Iterable[Tuple[str, str]]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--history", action="store_true", help="also scan the history of HEAD and the tags")
+    ap.add_argument(
+        "--rev",
+        help="with --history: scan the history of this commit instead of HEAD, and skip the index"
+        " (the pre-push hook passes each commit it is about to push)",
+    )
     args = ap.parse_args(argv)
+    if args.rev and not args.history:
+        ap.error("--rev needs --history")
+    if args.rev and not re.match(r"^[0-9a-f]{7,64}$", args.rev):
+        ap.error("--rev must be a commit id")
     found: List[str] = []
-    for where, text in index_files():
-        found += scan_lines(where, text)
+    if not args.rev:
+        for where, text in index_files():
+            found += scan_lines(where, text)
     if args.history:
-        for source in (history_blobs(), commits(), tags()):
+        rev = args.rev or "HEAD"
+        for source in (history_blobs(rev), commits(rev), tags()):
             for where, text in source:
                 found += scan_lines(where, text)
     for f in found:
