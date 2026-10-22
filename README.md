@@ -1,9 +1,9 @@
 # homelab_runner_controller
 
 Wakes self-hosted GitHub Actions runner machines when jobs for them are queued, and
-suspends them after they have been idle for a while. It runs on a small always-on board
-(written for an Orange Pi Zero with 512 MB RAM) on the same network segment as the
-machines.
+suspends them after they have been idle for a while. It runs on any small always-on Linux
+host on the same network segment as the machines: an ARM board such as an Orange Pi, MKS Pi
+or Raspberry Pi (512 MB RAM is plenty), or an x86 machine.
 
 - **Wake:** a Wake-on-LAN magic packet, sent when queued jobs outnumber the free online
   runners that could take them.
@@ -26,10 +26,10 @@ How the decisions are made, the security model and the known limits are describe
 | `rackctl/github.py` | controller | reads runners and queued jobs (GET only, ETag caching) |
 | `rackctl/actions.py` | controller | Wake-on-LAN packet, suspend over SSH |
 | `rackctl/main.py` | controller | the loop, `/metrics`, the state file |
-| `orangepi/install.sh` | controller | installs or updates the controller on the board |
-| `orangepi/deploy.sh` | your computer | packs one version with your configuration and installs it on the board |
-| `orangepi/check_config.py` | both | checks a configuration before it is installed |
-| `orangepi/` (other files) | controller | example configuration and the `systemd` unit |
+| `controller/install.sh` | controller | installs or updates the controller on its host |
+| `controller/deploy.sh` | your computer | packs one version with your configuration and installs it on the host |
+| `controller/check_config.py` | both | checks a configuration before it is installed |
+| `controller/` (other files) | controller | example configuration and the `systemd` unit |
 | `machine/rack-sleep` | runner machine | suspends the machine unless a job is running |
 | `machine/install.sh` | runner machine | installs `rack-sleep`, the `sudoers` rule, the restricted key and Wake-on-LAN |
 | `scripts/public_safe.py` | CI, pre-push | refuses private addresses, MAC addresses, personal emails and AI attribution |
@@ -37,6 +37,20 @@ How the decisions are made, the security model and the known limits are describe
 
 ## Requirements
 
+**The controller host:**
+
+- Linux with **systemd**, **Python 3.9+** with its standard library, and the OpenSSH
+  client. On Debian, Ubuntu, Raspberry Pi OS and Armbian the installer adds missing
+  packages with `apt`. Elsewhere (Fedora, Arch, …) install them first. Non-systemd systems
+  such as Alpine are not supported.
+- Any CPU architecture: the controller is pure Python and shell, with nothing to compile.
+  CI installs and starts it on x86_64 and arm64 (Ubuntu 24.04). 32-bit ARM (for example an
+  Orange Pi Zero) has no GitHub-hosted runner, so it is tested on real boards only.
+- Little memory and CPU: one Python process polling every 20 s.
+
+**The runner machines:**
+
+- Ubuntu or Debian with systemd (`machine/install.sh` uses `apt` for `ethtool`).
 - Runner machines with Wake-on-LAN and working suspend-to-RAM, enabled in the BIOS.
   Check this by hand on one machine first: suspend it, wake it with a packet from
   another machine, and confirm its runners come back online in GitHub.
@@ -60,36 +74,42 @@ sudo bash machine/install.sh --user rackctl --ci-user runner --pubkey /tmp/rackc
 
 Running the script again changes nothing.
 
-**On the controller board.** Start from a minimal Debian-based image. For an Orange Pi
-Zero that is Armbian's *minimal* image (Debian 13): no desktop, no Docker. SSH into it
-as a user with `sudo`. Then, from a checkout of this repository on your own computer:
+**On the controller host.** Start from a minimal system: on an ARM board, its minimal
+Debian-based image (Armbian *minimal*, Raspberry Pi OS *Lite*), with no desktop and no
+Docker; on an x86 machine, a server install of Debian or Ubuntu. SSH into it as a user with
+`sudo`. Then, from a checkout of this repository on your own computer:
 
 ```bash
-orangepi/deploy.sh <ssh-target> v0.1.0 /path/to/your/config.json
+controller/deploy.sh <ssh-target> v0.2.0 /path/to/your/config.json
 ```
+
+On a board that runs from an SD card, add `--ram-journal` (before `<ssh-target>`). It keeps
+the systemd journal of the whole host in RAM, so all logs are lost on reboot. Leave it out
+on a machine with a real disk.
 
 `deploy.sh` packs that tag's code (`git archive`, not your working tree) and your
 `config.json`, checks the configuration with that version's checker (the SSH key,
 `known_hosts` and the token files must be directly in `/etc/rackctl/`), copies the bundle
-with `scp` and runs `orangepi/install.sh` on the board with `sudo`. The board needs no
+with `scp` and runs `controller/install.sh` on the host with `sudo`. The host needs no
 access to GitHub for this.
 
-`install.sh` runs as root on the board. It:
+`install.sh` runs as root on the host. It:
 
-1. prints the board model, architecture and memory; installs `python3` and
-   `openssh-client` if missing (Python 3.9 or newer is required);
+1. checks that the host runs systemd; prints its model, architecture and memory; installs
+   `python3` and `openssh-client` with `apt` if they are missing (elsewhere it stops and
+   says what to install);
 2. creates the system user `rackctl` (no home, no login shell);
 3. puts the code at `/opt/rackctl/rackctl/` (owned by root, precompiled) and a copy of
-   the installer at `/opt/rackctl/orangepi/`;
+   the installer at `/opt/rackctl/controller/`;
 4. installs the configuration as `/etc/rackctl/config.json` (`0640`, group `rackctl`);
-5. creates the SSH key for the machines **on the board**, if there is none yet
+5. creates the SSH key for the machines **on the host**, if there is none yet
    (`/etc/rackctl/id_ed25519`, `0600`, owner `rackctl`), and prints its public key for
    `machine/install.sh --pubkey`;
 6. scans the host key of every machine that is not in `known_hosts` yet, and prints its
    fingerprint. Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
    machine. A sleeping machine cannot be scanned: run the installer again once it is
    awake. Until then the controller cannot suspend it;
-7. keeps the systemd journal in RAM (`Storage=volatile`), to spare the SD card;
+7. with `--ram-journal` only, keeps the systemd journal in RAM (`Storage=volatile`);
 8. installs and enables `rackctl.service`, and starts it only if every token file the
    configuration names exists and is readable by `rackctl`.
 
@@ -97,20 +117,20 @@ A run without `--set-token` never replaces an existing SSH key, host key or toke
 again at any time:
 
 ```bash
-sudo bash /opt/rackctl/orangepi/install.sh
+sudo bash /opt/rackctl/controller/install.sh
 ```
 
-**Tokens** are typed on the board, never put in the bundle:
+**Tokens** are typed on the host, never put in the bundle:
 
 ```bash
-ssh -t <ssh-target> sudo bash /opt/rackctl/orangepi/install.sh --set-token token-example-org
+ssh -t <ssh-target> sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org
 ```
 
 This reads the token without echoing it and writes `/etc/rackctl/<name>` (`0600`, owner
 `rackctl`). The name must match the `token_file` in your configuration. When every
 token is in place, run the installer again to start the service.
 
-**Watch it** with `journalctl -u rackctl -f` and `curl http://<board>:9105/metrics`.
+**Watch it** with `journalctl -u rackctl -f` and `curl http://<host>:9105/metrics`.
 While `"dry_run": true`, it only logs what it would do. When the log looks right, set
 `"dry_run": false` in your configuration and deploy again.
 
@@ -184,14 +204,14 @@ them breaks without any error when a name changes.
 
 ```bash
 python3 -m unittest discover -s tests -t .
-shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
+shellcheck machine/install.sh machine/rack-sleep controller/install.sh controller/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
 python3 scripts/public_safe.py --history
 ```
 
-CI runs these on GitHub-hosted runners, and also `tests/install_smoke.sh`: it installs
-the controller from scratch on a clean Ubuntu with systemd and starts it with fake tokens.
-That script changes the system, so never run it on a real board. It never runs on the self-hosted runners,
-because those are the machines this controller suspends.
+CI runs these on GitHub-hosted runners, and also `tests/install_smoke.sh` on x86_64 and on
+arm64. That script installs the controller from scratch on a clean Ubuntu with systemd and
+starts it with fake tokens. It changes the system, so never run it on a real host. CI never
+runs on the self-hosted runners, because those are the machines this controller suspends.
 
 **Nothing installation-specific goes into this repository.** That means no real IP or
 MAC addresses, no machine, user or repository names, no tokens and no personal email
@@ -201,7 +221,7 @@ infrastructure repository.
 
 `scripts/public_safe.py` catches the leaks that have a recognisable shape: private
 addresses, MAC addresses, personal emails and AI attribution. It checks the whole history
-of the branch and every tag's message and tagger, not only the latest commit. It cannot recognise public
+of the branch and of every tag, and every tag object, not only the latest commit. It cannot recognise public
 addresses or the names of real machines, users and repositories. Keeping those out is
 up to the author.
 
@@ -213,10 +233,13 @@ computer instead:
 scripts/install-hooks.sh
 ```
 
-It checks the whole history of every commit you push, on any branch, and lets ref
-deletions through. Run it again after `scripts/pre-push` changes.
+For every ref you push (any branch or tag), it checks the whole history of that commit and
+every tag object on the way to it. Ref deletions pass. A local tag you do not push is not
+checked. On a branch whose guard is too old for the hook, the push is refused with a message
+saying so. The installer refuses when `core.hooksPath` is set: that directory is shared, so
+put the hook there yourself if you want it. Run the installer again after `scripts/pre-push`
+changes.
 
 ## Status
 
-Not yet deployed. Version `v0.1.0` is the first release; run it a week with
-`"dry_run": true` before turning that off.
+Not yet deployed. Run it a week with `"dry_run": true` before turning that off.

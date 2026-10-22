@@ -141,7 +141,7 @@ class GitHubTest(unittest.TestCase):
 
 class ConfigTest(unittest.TestCase):
     def test_example_config_loads_and_defaults_to_dry_run(self):
-        cfg = main.load_config(str(HERE / "orangepi" / "config.example.json"))
+        cfg = main.load_config(str(HERE / "controller" / "config.example.json"))
         self.assertTrue(cfg["dry_run"])
         machines = main.machines_from(cfg)
         self.assertEqual([m.name for m in machines], ["host1", "host2", "host3"])

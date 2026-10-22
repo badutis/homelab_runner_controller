@@ -9,10 +9,13 @@ a recognisable shape:
 - names of AI tools, as attribution.
 
 It checks every file in the index. With ``--history`` it also checks every version of
-every file in the history of ``HEAD``, every commit message, author and committer, and
-every tag's message and tagger. ``--rev SHA`` scans that commit's history instead of
-``HEAD`` (and skips the index): the pre-push hook (``scripts/install-hooks.sh``) runs it
-for each commit about to be pushed, so a leak is stopped before it reaches GitHub.
+every file in the history of ``HEAD`` and of every tag, every commit message, author and
+committer in them, and every tag object (message and tagger, nested tags included).
+
+``--rev SHA`` (with ``--history``) checks only what that one object brings: the history of
+the commit, or of the commit a tag points at, plus the tag object chain. It skips the index
+and the other local tags. The pre-push hook (``scripts/install-hooks.sh``) runs it for each
+ref about to be pushed, so a leak is stopped before it reaches GitHub.
 
 Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 198.51.100.0/24, 203.0.113.0/24; RFC 3849: 2001:db8::/32), the documentation MAC range
@@ -20,12 +23,12 @@ Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 addresses.
 
 Not caught: public addresses, MAC addresses written as 12 hex digits without separators
-(they cannot be told apart from hashes), UTF-16 files (read as binary), commits that only
-a tag points at, and names of real machines, users or
-repositories. A public list of those would itself leak them, so keeping them out stays
+(they cannot be told apart from hashes), UTF-16 files (read as binary), and names of real
+machines, users or repositories. A public list of those would itself leak them, so keeping them out stays
 the author's job.
 
-Exit code 0 when clean, 1 with one line per finding otherwise.
+Exit code 0 when clean, 1 with one line per finding, 2 for a usage error and 3 when git
+itself fails (so the pre-push hook can tell a finding from a broken run).
 """
 
 import argparse
@@ -163,16 +166,28 @@ def commits(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
         yield f"commit {sha} (message)", body
 
 
+def tag_chain(sha: str) -> Iterable[Tuple[str, str]]:
+    """Every tag object from ``sha`` down to what it finally points at (tags can be nested).
+    The raw object holds the tag name, the tagger and the message."""
+    for _ in range(100):  # a chain this long is not a real tag
+        if git("cat-file", "-t", sha).strip() != b"tag":
+            return
+        raw = git("cat-file", "tag", sha).decode(errors="replace")
+        yield f"tag object {sha[:7]}", raw
+        target = re.search(r"^object ([0-9a-f]+)$", raw, re.M)
+        if not target:
+            return
+        sha = target.group(1)
+
+
 def tags() -> Iterable[Tuple[str, str]]:
-    sep = "\x1e"
-    out = git("for-each-ref", "refs/tags", f"--format=%(refname:short)%00%(taggername) %(taggeremail)%00%(contents){sep}")
-    for entry in out.decode(errors="replace").split(sep):
-        entry = entry.strip("\n")
-        if not entry:
-            continue
-        name, tagger, body = entry.split("\0", 2)
-        yield f"tag {name} (tagger)", tagger
-        yield f"tag {name} (message)", body
+    """Every local tag: its tag objects and the history it points at."""
+    for line in git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace").splitlines():
+        sha, _, name = line.partition(" ")
+        for where, text in tag_chain(sha):
+            yield f"{where} ({name})", text
+        yield from history_blobs(sha)
+        yield from commits(sha)
 
 
 def main(argv=None) -> int:
@@ -189,14 +204,22 @@ def main(argv=None) -> int:
     if args.rev and not re.match(r"^[0-9a-f]{7,64}$", args.rev):
         ap.error("--rev must be a commit id")
     found: List[str] = []
-    if not args.rev:
-        for where, text in index_files():
-            found += scan_lines(where, text)
-    if args.history:
-        rev = args.rev or "HEAD"
-        for source in (history_blobs(rev), commits(rev), tags()):
-            for where, text in source:
+    try:
+        if not args.rev:
+            for where, text in index_files():
                 found += scan_lines(where, text)
+        if args.history:
+            if args.rev:
+                sources = (tag_chain(args.rev), history_blobs(args.rev), commits(args.rev))
+            else:
+                sources = (history_blobs("HEAD"), commits("HEAD"), tags())
+            for source in sources:
+                for where, text in source:
+                    found += scan_lines(where, text)
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or b"").decode(errors="replace").strip()
+        print(f"git failed: {' '.join(e.cmd)}: {err}", file=sys.stderr)
+        return 3
     for f in found:
         print(f)
     return 1 if found else 0

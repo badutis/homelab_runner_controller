@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Installs or updates the controller on the board it runs on. Run as root from an unpacked
-# bundle (orangepi/deploy.sh builds and copies one):
+# Installs or updates the controller on the host it runs on: any Linux with systemd and
+# Python 3.9+ (a small ARM board such as an Orange Pi, MKS Pi or Raspberry Pi, or an x86
+# machine). Run as root from an unpacked bundle (controller/deploy.sh builds and copies one):
 #
-#   sudo bash orangepi/install.sh [--config FILE] [--version VERSION]
-#   sudo bash orangepi/install.sh --set-token NAME      # reads one token, nothing echoed
+#   sudo bash controller/install.sh [--config FILE] [--version VERSION] [--ram-journal]
+#   sudo bash controller/install.sh --set-token NAME      # reads one token, nothing echoed
 #
-# The installed copy (/opt/rackctl/orangepi/install.sh) works the same way, so after the
-# first install `sudo bash /opt/rackctl/orangepi/install.sh` re-runs it in place.
+# --ram-journal keeps the systemd journal of the WHOLE host in RAM (Storage=volatile), to
+# spare an SD card. All logs are then lost on reboot, so use it only on such a board. Without
+# it the journal is left as it is.
+#
+# The installed copy (/opt/rackctl/controller/install.sh) works the same way, so after the
+# first install `sudo bash /opt/rackctl/controller/install.sh` re-runs it in place.
 #
 # Running it again only changes what differs. A run without --set-token never overwrites
-# an existing SSH key, a known host key or a token. The service is (re)started only when the configuration
-# and every token file it names are in place.
+# an existing SSH key, a known host key or a token. The service is (re)started only when the
+# configuration and every token file it names are in place.
 set -euo pipefail
 
 ETC=/etc/rackctl
@@ -28,16 +33,23 @@ note() { echo "-- $*"; }
 CONFIG=""
 VERSION=""
 TOKEN_NAME=""
+RAM_JOURNAL=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --set-token) TOKEN_NAME="$2"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    --ram-journal) RAM_JOURNAL=yes; shift ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
 [ "$(id -u)" -eq 0 ] || die "run with sudo"
+# The service, the journal and the restart checks all need systemd as the init system.
+[ -d /run/systemd/system ] || die "this host does not run systemd; the controller needs it"
+for c in useradd runuser install; do
+  command -v "$c" >/dev/null || die "'$c' not found (it comes with the base system on Debian, Ubuntu, Fedora, Arch)"
+done
 
 # --- one token ---------------------------------------------------------------------------
 if [ -n "$TOKEN_NAME" ]; then
@@ -50,7 +62,7 @@ if [ -n "$TOKEN_NAME" ]; then
     config.json|*.pub|id_ed25519|known_hosts) die "$TOKEN_NAME is not a token file name" ;;
   esac
   if [ -f "$ETC/config.json" ]; then
-    PATHS="$(python3 "$OPT/orangepi/check_config.py" "$ETC/config.json")" \
+    PATHS="$(python3 "$OPT/controller/check_config.py" "$ETC/config.json")" \
       || die "$ETC/config.json is invalid: fix it before setting tokens"
     if printf '%s\n' "$PATHS" | awk -F'\t' '$1 == "ssh_key" || $1 == "known_hosts" {print $2}' | grep -qxF "$ETC/$TOKEN_NAME"; then
       die "$ETC/$TOKEN_NAME is the SSH key or known_hosts, not a token"
@@ -75,18 +87,23 @@ if [ -n "$TOKEN_NAME" ]; then
   exit 0
 fi
 
-[ -f "$SRC/rackctl/__main__.py" ] || die "no rackctl/ package next to orangepi/ (run from an unpacked bundle)"
+[ -f "$SRC/rackctl/__main__.py" ] || die "no rackctl/ package next to controller/ (run from an unpacked bundle)"
 for f in rackctl.service check_config.py config.example.json; do
-  [ -f "$HERE/$f" ] || die "orangepi/$f missing"
+  [ -f "$HERE/$f" ] || die "controller/$f missing"
 done
 [ -z "$VERSION" ] || [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]] || die "bad --version"
 [ -z "$CONFIG" ] || [ -f "$CONFIG" ] || die "--config file not found: $CONFIG"
 
-# --- the board ---------------------------------------------------------------------------
+# --- the host ----------------------------------------------------------------------------
+# ARM boards report their model in the device tree; an x86 machine through DMI.
 MODEL="unknown"
-[ -r /proc/device-tree/model ] && MODEL="$(tr -d '\0' < /proc/device-tree/model)"
+if [ -r /proc/device-tree/model ]; then
+  MODEL="$(tr -d '\0' < /proc/device-tree/model)"
+elif [ -r /sys/class/dmi/id/product_name ]; then
+  MODEL="$(cat /sys/class/dmi/id/product_name)"
+fi
 MEM_MB="$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)"
-note "board: $MODEL, $(uname -m), ${MEM_MB} MB RAM"
+note "host: $MODEL, $(uname -m), ${MEM_MB} MB RAM"
 
 # --- packages ----------------------------------------------------------------------------
 NEED=()
@@ -98,6 +115,9 @@ done
 STDLIB='import compileall, http.server, ipaddress, json, urllib.request'
 command -v python3 >/dev/null && ! python3 -c "$STDLIB" 2>/dev/null && NEED+=(python3)
 if [ ${#NEED[@]} -gt 0 ]; then
+  # Installed automatically only with apt (Debian, Ubuntu, Raspberry Pi OS, Armbian).
+  command -v apt-get >/dev/null \
+    || die "missing ${NEED[*]}: install Python 3.9+ (with its standard library) and the OpenSSH client with your package manager, then run again"
   note "installing ${NEED[*]}"
   apt-get update -q
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${NEED[@]}"
@@ -133,9 +153,9 @@ mv "$OPT/rackctl.new" "$OPT/rackctl"
 rm -rf "$OPT/rackctl.old"
 # The installer itself, so that tokens can be set and the install re-run later.
 if [ "$SRC" != "$OPT" ]; then
-  install -d -o root -g root -m 0755 "$OPT/orangepi"
+  install -d -o root -g root -m 0755 "$OPT/controller"
   for f in install.sh check_config.py rackctl.service config.example.json; do
-    install -o root -g root -m 0644 "$HERE/$f" "$OPT/orangepi/$f"
+    install -o root -g root -m 0644 "$HERE/$f" "$OPT/controller/$f"
   done
 fi
 if [ -n "$VERSION" ]; then
@@ -153,10 +173,10 @@ if [ -n "$CONFIG" ]; then
   note "configuration: $ETC/config.json"
 fi
 if [ ! -f "$ETC/config.json" ]; then
-  note "no $ETC/config.json yet: run again with --config FILE (start from orangepi/config.example.json)"
+  note "no $ETC/config.json yet: run again with --config FILE (start from controller/config.example.json)"
   START=no
 else
-  PATHS="$(python3 "$OPT/orangepi/check_config.py" "$ETC/config.json")" || die "$ETC/config.json is invalid"
+  PATHS="$(python3 "$OPT/controller/check_config.py" "$ETC/config.json")" || die "$ETC/config.json is invalid"
   START=yes
 fi
 
@@ -208,7 +228,7 @@ if [ "$START" = yes ]; then
       note "token $token is a symlink: replace it with --set-token"
       START=no
     elif [ ! -f "$token" ]; then
-      note "missing token $token: sudo bash $OPT/orangepi/install.sh --set-token $(basename "$token")"
+      note "missing token $token: sudo bash $OPT/controller/install.sh --set-token $(basename "$token")"
       START=no
     elif ! runuser -u "$SVC_USER" -- test -r "$token"; then
       note "token $token is not readable by $SVC_USER"
@@ -220,13 +240,17 @@ if [ "$START" = yes ]; then
   done
 fi
 
-# --- less writing to the SD card ---------------------------------------------------------
-install -d -m 0755 "$(dirname "$JOURNALD_DROPIN")"
-WANT_JOURNALD="$(printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=16M\n')"
-if [ "$(cat "$JOURNALD_DROPIN" 2>/dev/null)" != "$WANT_JOURNALD" ]; then
-  printf '%s\n' "$WANT_JOURNALD" > "$JOURNALD_DROPIN"
-  systemctl restart systemd-journald
-  note "journal kept in RAM only ($JOURNALD_DROPIN)"
+# --- less writing to an SD card (only when asked) -----------------------------------------
+if [ "$RAM_JOURNAL" = yes ]; then
+  install -d -m 0755 "$(dirname "$JOURNALD_DROPIN")"
+  WANT_JOURNALD="$(printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=16M\n')"
+  if [ "$(cat "$JOURNALD_DROPIN" 2>/dev/null)" != "$WANT_JOURNALD" ]; then
+    printf '%s\n' "$WANT_JOURNALD" > "$JOURNALD_DROPIN"
+    systemctl restart systemd-journald
+    note "journal of the whole host kept in RAM only ($JOURNALD_DROPIN)"
+  fi
+elif [ -f "$JOURNALD_DROPIN" ]; then
+  note "$JOURNALD_DROPIN from an earlier --ram-journal run is kept; delete it to log to disk again"
 fi
 
 # --- the service -------------------------------------------------------------------------

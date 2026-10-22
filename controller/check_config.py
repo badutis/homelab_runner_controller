@@ -1,6 +1,6 @@
 """Check a controller configuration before it is installed, and list the paths it uses.
 
-    python3 orangepi/check_config.py CONFIG.json
+    python3 controller/check_config.py CONFIG.json
 
 It loads the file the same way the controller does (``rackctl.main.load_config`` and
 ``machines_from``) and checks the type and form of the settings, sources and machines

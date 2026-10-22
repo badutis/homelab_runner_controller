@@ -86,7 +86,8 @@ class RepositoryTest(unittest.TestCase):
         old = os.getcwd()
         with tempfile.TemporaryDirectory() as d:
             env = dict(os.environ, GIT_AUTHOR_NAME=author, GIT_COMMITTER_NAME="t",
-                       GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com")
+                       GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com",
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", HOME=d)
 
             def git(*a):
                 subprocess.run(["git", "-c", "tag.gpgSign=false", "-c", "commit.gpgSign=false", *a],
@@ -132,7 +133,7 @@ class RepositoryTest(unittest.TestCase):
     def test_annotated_tag_message_is_scanned(self):
         code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
         self.assertEqual(code, 1)
-        self.assertIn("tag v1 (message)", out)
+        self.assertRegex(out, r"tag object [0-9a-f]{7} \(v1\):\d+: private address")
 
     def test_file_that_is_not_utf8_is_still_read(self):
         code, out = self.run_in_repo([f"ip {PRIV} ".encode() + b"\xe0\n"], raw=True, history=False)

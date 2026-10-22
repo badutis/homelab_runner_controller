@@ -34,12 +34,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
+      - run: shellcheck machine/install.sh machine/rack-sleep controller/install.sh controller/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
 
-  # Installs the controller from scratch on a clean Ubuntu with systemd, as the board
-  # would get it from orangepi/deploy.sh, and starts it with fake tokens.
+  # Installs the controller from scratch on a clean Ubuntu with systemd, as a host would
+  # get it from controller/deploy.sh, and starts it with fake tokens: on x86_64 here and on
+  # arm64 below (free for public repositories). 32-bit ARM has no GitHub-hosted runner.
   install:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/install_smoke.sh
+
+  install-arm64:
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
