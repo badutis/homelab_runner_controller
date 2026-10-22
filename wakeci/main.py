@@ -326,12 +326,12 @@ def run(cfg: dict) -> None:
                     log.warning("source %s not read: %s", source, err)
                 for src in gh.sources:
                     key = f"source:{src.runners_path}"
-                    err = gh.errors.get(src.runners_path)
-                    if err is not None:
+                    error = gh.errors.get(src.runners_path)
+                    if error is not None:
                         notify(
                             notifier.problem(
                                 key,
-                                f"wakeci: GitHub source {src.runners_path} cannot be read: {err}. "
+                                f"wakeci: GitHub source {src.runners_path} cannot be read: {error}. "
                                 "No machine is suspended while this lasts (check its token).",
                                 now,
                             )

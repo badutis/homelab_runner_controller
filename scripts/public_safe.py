@@ -55,12 +55,14 @@ EARLIER_VERSIONS_OF_THIS_FILE = frozenset(
     }
 )
 
-PRIVATE_NETS = [
+PRIVATE_NETS_V4 = [
     ipaddress.IPv4Network((0x0A000000, 8)),
     ipaddress.IPv4Network((0xAC100000, 12)),
     ipaddress.IPv4Network((0xC0A80000, 16)),
     ipaddress.IPv4Network((0x64400000, 10)),  # carrier-grade NAT
     ipaddress.IPv4Network((0xA9FE0000, 16)),  # link-local
+]
+PRIVATE_NETS_V6 = [
     ipaddress.IPv6Network((0xFC << 120, 7)),  # unique-local
     ipaddress.IPv6Network((0xFE80 << 112, 10)),  # link-local
 ]
@@ -100,14 +102,14 @@ def _mac_allowed(run: str) -> bool:
 def findings_in_text(text: str) -> Iterator[str]:
     for m in IPV4.finditer(text):
         ip = _ipv4(m.group(1))
-        if ip is not None and any(ip in net for net in PRIVATE_NETS):
+        if ip is not None and any(ip in net for net in PRIVATE_NETS_V4):
             yield f"private address {ip}"
     for m in IPV6.finditer(text):
         try:
             ip6 = ipaddress.IPv6Address(m.group(1))
         except ValueError:
             continue
-        if any(ip6 in net for net in PRIVATE_NETS):
+        if any(ip6 in net for net in PRIVATE_NETS_V6):
             yield f"private address {ip6}"
     for m in MAC_RUN.finditer(text):
         if not _mac_allowed(m.group(1)):
@@ -181,7 +183,7 @@ def history(revs: list[str]) -> Iterable[tuple[str, str]]:
     """Every blob and every commit reachable from ``revs`` (commits read raw: author and
     committer names and emails, and the message, whatever characters it holds). A blob
     with no path is one a tag points at directly; it is scanned too."""
-    paths = {}
+    paths: dict[str, str] = {}
     for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         paths.setdefault(sha, path)
@@ -218,7 +220,7 @@ def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[tupl
 
 def tag_refs() -> list[tuple[str, str]]:
     out = git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace")
-    return [tuple(line.split(" ", 1)) for line in out.splitlines() if " " in line]
+    return [(sha, name) for sha, _, name in (line.partition(" ") for line in out.splitlines()) if name]
 
 
 def tags(refs: list[tuple[str, str]]) -> Iterable[tuple[str, str]]:
