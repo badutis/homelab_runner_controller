@@ -16,6 +16,7 @@ On success it prints one ``kind<TAB>value`` line per path the installer has to p
     ssh_key      /etc/rackctl/id_ed25519
     known_hosts  /etc/rackctl/known_hosts
     token        /etc/rackctl/token-example-org
+    token        /etc/rackctl/notify-url   (the webhook URL, when ``notify`` is set)
     host         192.0.2.11
 
 On failure it prints the reason to stderr and exits with 1.
@@ -29,6 +30,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from rackctl import actions, main  # noqa: E402  (needs the path above)
+from rackctl.notify import FORMATS  # noqa: E402
 
 ETC = "/etc/rackctl"
 FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -94,6 +96,28 @@ def check(path: str):
         if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
             raise ValueError(f"{where}.token_file must not reuse another file's name")
         out.append(("token", token))
+
+    notify = cfg.get("notify")
+    if notify is not None:
+        if not isinstance(notify, dict):
+            raise ValueError("notify must be an object")
+        unknown = set(notify) - {"url_file", "format", "after_minutes", "repeat_hours"}
+        if unknown:
+            raise ValueError(f"notify has unknown keys: {', '.join(sorted(unknown))}")
+        url_file = in_etc("notify.url_file", notify.get("url_file"))
+        tokens = {v for k, v in out if k == "token"}
+        if url_file in tokens | {used["ssh_key"], used["known_hosts"], used["ssh_key"] + ".pub", ETC + "/config.json"}:
+            raise ValueError("notify.url_file must be a file of its own")
+        if notify.get("format") not in FORMATS:
+            raise ValueError(f"notify.format must be one of {', '.join(FORMATS)}")
+        after = notify.get("after_minutes", 10)
+        if isinstance(after, bool) or not isinstance(after, (int, float)) or after < 0:
+            raise ValueError("notify.after_minutes must be a number, 0 or more")
+        repeat = notify.get("repeat_hours", 6)
+        if isinstance(repeat, bool) or not isinstance(repeat, (int, float)) or repeat <= 0:
+            raise ValueError("notify.repeat_hours must be a number greater than 0")
+        # The installer treats it like a token: it must exist and be readable by the service.
+        out.append(("token", url_file))
 
     machines = main.machines_from(cfg)
     if not machines:

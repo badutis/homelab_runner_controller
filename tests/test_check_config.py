@@ -38,9 +38,14 @@ class CheckConfigTest(unittest.TestCase):
         code, out, _ = run(EXAMPLE)
         self.assertEqual(code, 0)
         lines = [l.split("\t") for l in out.splitlines()]
-        self.assertEqual([k for k, _ in lines].count("token"), 2)
+        self.assertEqual([k for k, _ in lines].count("token"), 3)  # two sources and the webhook URL
         self.assertEqual([k for k, _ in lines].count("host"), 3)
         self.assertIn(["ssh_key", "/etc/rackctl/id_ed25519"], lines)
+
+    def test_notify_is_optional_and_its_url_file_is_listed_as_a_token(self):
+        self.assertEqual(run(changed(notify=lambda c: c.pop("notify")))[0], 0)
+        code, out, _ = run(EXAMPLE)
+        self.assertIn("token\t/etc/rackctl/notify-url", out.splitlines())
 
     def test_sources_may_share_one_token_file(self):
         cfg = changed(sources=lambda c: c["sources"][1].update(token_file=c["sources"][0]["token_file"]))
@@ -67,6 +72,16 @@ class CheckConfigTest(unittest.TestCase):
             "host starting with a dash": changed(machines=lambda c: c["machines"][0].update(host="-oProxyCommand=x")),
             "host with an IPv6 scope": changed(machines=lambda c: c["machines"][0].update(host="fe" + "80::1%$(reboot)")),
             "prefix not a string": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[1])),
+            "notify not an object": changed(notify="yes"),
+            "notify unknown key": changed(notify=lambda c: c["notify"].update(channel="x")),
+            "notify url_file outside /etc/rackctl": changed(notify=lambda c: c["notify"].update(url_file="/tmp/u")),
+            "notify url_file is a token": changed(notify=lambda c: c["notify"].update(url_file=c["sources"][0]["token_file"])),
+            "notify url_file is the key": changed(notify=lambda c: c["notify"].update(url_file="/etc/rackctl/id_ed25519")),
+            "notify bad format": changed(notify=lambda c: c["notify"].update(format="teams")),
+            "notify no format": changed(notify=lambda c: c["notify"].pop("format")),
+            "notify negative wait": changed(notify=lambda c: c["notify"].update(after_minutes=-1)),
+            "notify zero repeat": changed(notify=lambda c: c["notify"].update(repeat_hours=0)),
+            "notify repeat as text": changed(notify=lambda c: c["notify"].update(repeat_hours="6")),
             "no sources": changed(sources=[]),
             "bad runners_path": changed(sources=lambda c: c["sources"][0].update(runners_path="example-org")),
             "relative token": changed(sources=lambda c: c["sources"][0].update(token_file="token")),

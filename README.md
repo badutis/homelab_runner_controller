@@ -127,8 +127,9 @@ ssh -t <ssh-target> sudo bash /opt/rackctl/controller/install.sh --set-token tok
 ```
 
 This reads the token without echoing it and writes `/etc/rackctl/<name>` (`0600`, owner
-`rackctl`). The name must match the `token_file` in your configuration. When every
-token is in place, run the installer again to start the service.
+`rackctl`). The name must match the `token_file` in your configuration. The webhook URL
+for notifications (below) is set the same way: `--set-token notify-url`. When every file
+is in place, run the installer again to start the service.
 
 **Watch it** with `journalctl -u rackctl -f` and `curl http://<host>:9105/metrics`.
 While `"dry_run": true`, it only logs what it would do. When the log looks right, set
@@ -146,6 +147,7 @@ While `"dry_run": true`, it only logs what it would do. When the log looks right
 | `state_file` | `/var/lib/rackctl/last-online.json` | when each machine was last online |
 | `ssh_key` | — | private key used for `rack-sleep` |
 | `known_hosts` | `/etc/rackctl/known_hosts` | host keys of the machines (checked strictly) |
+| `notify` | — | optional: where to send notifications (below) |
 | `sources[]` | — | where runners are registered and whose jobs use them (below) |
 | `machines[]` | — | the machines (below) |
 
@@ -181,6 +183,48 @@ Use one fine-grained personal access token per source, with read access only:
 Check the exact permission names when you create the tokens: GitHub renames them from
 time to time. A stolen token can read the queue and nothing else.
 
+## Notifications
+
+Without a `notify` block every warning goes only to the journal. With one, the controller
+also posts to a webhook (a Discord or Slack channel, or anything that takes JSON):
+
+```json
+"notify": {
+  "url_file": "/etc/rackctl/notify-url",
+  "format": "discord",
+  "after_minutes": 10,
+  "repeat_hours": 6
+}
+```
+
+- `url_file` holds the webhook URL. The URL is a secret, because anyone who has it can post
+  to your channel. So it lives in its own file in `/etc/rackctl/`, set with
+  `install.sh --set-token notify-url`, and it is never written to the log.
+- `format`: `discord` (`{"content": …}`, mentions disabled), `slack` (`{"text": …}`) or
+  `json` (`{"event", "key", "text", "resolved"}`).
+- `after_minutes` (default 10): how long a problem must last before it is reported, so a
+  short network drop stays quiet.
+- `repeat_hours` (default 6): how often the message repeats while the problem lasts.
+
+What is sent:
+
+| Event | When | "Resolved" message | In `dry_run` |
+|---|---|---|---|
+| a GitHub source cannot be read | for `after_minutes` without a break; nothing is suspended meanwhile | yes | yes |
+| the GitHub request limit is nearly used up | at once; polling waits for the reset | yes | yes |
+| the controller started | each start (version, machine count, `dry_run`) | — | yes |
+| a machine did not wake up | after the second wake attempt | — | no (nothing is sent to it) |
+| a machine failed to suspend | three times in a row | — | no (nothing is sent to it) |
+
+Messages are posted from a separate thread. A slow or broken webhook never holds up the
+control loop. A post that fails (an error answer, a rate limit, a timeout) is logged
+without the URL, counted once in `rackctl_notify_failed_total` and sent again every 5
+minutes, for up to 24 hours, with the time it first failed. A retry is dropped when it
+has gone stale: the problem ended, or for a "resolved" message the problem came back and was
+reported, or a newer message with the same subject was sent.
+A redirect counts as a failure, because following it would silently drop the message.
+The URL must be `https` (plain `http` only to `localhost`, for a local relay).
+
 ## Metrics
 
 `GET /metrics` returns the Prometheus text format:
@@ -196,6 +240,7 @@ time to time. A stolen token can read the queue and nothing else.
 | `rackctl_github_ok` | gauge | `source` |
 | `rackctl_github_remaining` | gauge | `source` |
 | `rackctl_dry_run` | gauge | — |
+| `rackctl_notify_failed_total` | counter | — |
 
 The names are pinned by a test (`tests/test_io.py`). A monitoring system that scrapes
 them breaks without any error when a name changes.

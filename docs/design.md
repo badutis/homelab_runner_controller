@@ -128,8 +128,8 @@ before switching it off.
   Stopping the runner services before suspending would close the window, at the cost
   of starting them again on resume.
 - **One unreadable source stops all suspending.** It is visible as
-  `rackctl_github_ok = 0` and as a warning in the log on every poll. An alert for it is
-  still missing.
+  `rackctl_github_ok = 0`, as a warning in the log on every poll and, with `notify` set, as
+  a webhook message after `after_minutes`.
 - **One source's rate limit pauses both.** When a token is close to its limit, the loop
   waits for that token's reset before polling any source. Watch
   `rackctl_github_remaining`.
@@ -141,4 +141,5 @@ before switching it off.
 - **Jobs with `needs:`.** Not verified whether the API already lists a job as `queued`
   while it waits for an earlier job. If it does, a machine is woken early, and if no work
   arrives it is suspended again after `idle_minutes`.
-- **Alerts** only go to the log for now.
+- **Notifications** need a webhook (`notify`); without one they go only to the log. A
+  controller that is down sends nothing, so watch it from outside too (its `/metrics`).
