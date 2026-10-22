@@ -108,7 +108,7 @@ def save_state(path: str, data: Dict[str, Dict[str, str]]) -> None:
     os.replace(tmp, path)
 
 
-# --- metrikos MKS Pi -------------------------------------------------------------------
+# --- metrikos stebėjimui ------------------------------------------------------------
 
 
 class Metrics:

@@ -20,7 +20,7 @@ class Machine:
     host: str
     ssh_user: str
     runner_prefixes: Tuple[str, ...]
-    rank: int  # mažesnis žadinamas pirmiau (i5 prieš i3)
+    rank: int  # mažesnis žadinamas pirmiau (greitesnės mašinos prieš lėtesnes)
 
     def owns(self, runner_name: str) -> bool:
         return any(runner_name.startswith(p) for p in self.runner_prefixes)
@@ -87,7 +87,7 @@ class MachineState:
     hold_until: Optional[datetime] = None
     weekly_pending: bool = False
     # Paskutinis kartas, kai bent vienas runner'is buvo prisijungęs. Saugoma diske kartu su
-    # hold_until: GitHub ištrina runner'į, neprisijungusį 14 dienų (docs/valdymas.md).
+    # hold_until: GitHub ištrina runner'į, neprisijungusį 14 dienų (docs/design.md).
     last_online: Optional[datetime] = None
 
 

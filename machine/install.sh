@@ -2,17 +2,20 @@
 # Paruošia vieną CI mašiną valdikliui: rack-sleep, sudoers eilutė, ribotas Orange Pi
 # raktas, Wake-on-LAN. Paleidžiama pačioje mašinoje:
 #
-#   sudo bash install.sh --user host3 --pubkey /tmp/rackctl.pub [--iface eno1]
+#   sudo bash install.sh --user rackctl --ci-user runner --pubkey /tmp/rackctl.pub [--iface eno1]
 #
-# Kartojant nieko nedubliuoja. BIOS'e Wake-on-LAN įjungiamas ranka (docs/valdymas.md, 0 žingsnis).
+# --ci-user — paskyra, kuri vykdo CI job'us: jai raktas niekada neduodamas.
+# Kartojant nieko nedubliuoja. BIOS'e Wake-on-LAN įjungiamas ranka (docs/design.md).
 set -euo pipefail
 
 USER_NAME=""
+CI_USER=""
 PUBKEY=""
 IFACE="eno1"
 while [ $# -gt 0 ]; do
   case "$1" in
     --user) USER_NAME="$2"; shift 2 ;;
+    --ci-user) CI_USER="$2"; shift 2 ;;
     --pubkey) PUBKEY="$2"; shift 2 ;;
     --iface) IFACE="$2"; shift 2 ;;
     *) echo "nežinomas argumentas: $1" >&2; exit 2 ;;
@@ -23,7 +26,10 @@ die() { echo "klaida: $*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "paleisti su sudo"
 [ -n "$USER_NAME" ] || die "nenurodytas --user"
 id "$USER_NAME" >/dev/null 2>&1 || die "--user turi būti esama paskyra"
-[ "$USER_NAME" != "ciuser" ] || die "ne ciuser: ta paskyra vykdo CI kodą"
+[ -n "$CI_USER" ] || die "nenurodytas --ci-user (paskyra, kuri vykdo CI job'us)"
+id "$CI_USER" >/dev/null 2>&1 || die "--ci-user turi būti esama paskyra (ta, kuri vykdo CI job'us)"
+# Lyginama pagal UID: tas pats naudotojas gali turėti kelis vardus.
+[ "$(id -u "$USER_NAME")" != "$(id -u "$CI_USER")" ] || die "--user negali būti $CI_USER: ta paskyra vykdo CI kodą"
 [ -f "$PUBKEY" ] || die "--pubkey failas nerastas"
 [ "$(grep -c . "$PUBKEY")" -eq 1 ] || die "--pubkey faile turi būti lygiai vienas raktas"
 grep -qE '^ssh-(ed25519|rsa) ' "$PUBKEY" || die "--pubkey nėra viešasis SSH raktas"
