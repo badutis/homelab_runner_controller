@@ -124,11 +124,54 @@ class CheckConfigTest(unittest.TestCase):
             "host with a shell char": changed(machines=lambda c: c["machines"][0].update(host="a;b")),
             "bad ssh_user": changed(machines=lambda c: c["machines"][0].update(ssh_user="Root$")),
             "no prefixes": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[])),
+            "host left as FILL-IN": changed(machines=lambda c: c["machines"][0].update(host="FILL-IN")),
+            "mac left as FILL-IN": changed(machines=lambda c: c["machines"][0].update(mac="FILL-IN")),
+            "ssh_user left as FILL-IN": changed(machines=lambda c: c["machines"][0].update(ssh_user="FILL-IN")),
+            "token file left as FILL-IN": changed(
+                sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/FILL-IN")
+            ),
+            "repo left as FILL-IN": changed(sources=lambda c: c["sources"][0].update(repos=["example-org/FILL-IN"])),
+            "same mac twice": changed(machines=lambda c: c["machines"][1].update(mac="00-00-5E-00-53-01")),
+            "same host twice": changed(machines=lambda c: c["machines"][1].update(host="192.0.2.11")),
+            "same host name twice, other case": changed(
+                machines=lambda c: (
+                    c["machines"][0].update(host="host1.example.com"),
+                    c["machines"][1].update(host="HOST1.example.com"),
+                )
+            ),
+            "same prefix on two machines": changed(
+                machines=lambda c: c["machines"][1].update(runner_prefixes=["host2-a-", "host1-a-"])
+            ),
         }
         for name, cfg in cases.items():
             code, out, err = run(cfg)
             self.assertEqual((code, out), (1, ""), name)
             self.assertIn("invalid configuration", err, name)
+
+    def test_a_placeholder_names_the_field_to_fill_in(self):
+        cfg = changed(machines=lambda c: c["machines"][2].update(mac="FILL-IN", host="FILL-IN"))
+        code, _, err = run(cfg)
+        self.assertEqual(code, 1)
+        # The first one found, by its place in the file, before any other rule complains.
+        self.assertIn("machines[2].mac is still FILL-IN", err)
+
+    def test_the_same_prefix_twice_on_one_machine_is_harmless(self):
+        cfg = changed(machines=lambda c: c["machines"][0].update(runner_prefixes=["host1-a-", "host1-a-"]))
+        self.assertEqual(run(cfg)[:2], (0, run(EXAMPLE)[1]))
+
+    def test_overlapping_prefixes_are_a_warning(self):
+        cfg = changed(
+            machines=lambda c: (
+                c["machines"][0].update(runner_prefixes=["host1"]),
+                c["machines"][1].update(runner_prefixes=["host10-"]),
+            )
+        )
+        code, _, err = run(cfg)
+        self.assertEqual(code, 0)
+        self.assertIn("warning: a runner whose name starts with 'host10-' belongs to both host1 and host2", err)
+
+    def test_the_example_has_no_warnings(self):
+        self.assertEqual(run(EXAMPLE)[2], "")
 
 
 if __name__ == "__main__":
