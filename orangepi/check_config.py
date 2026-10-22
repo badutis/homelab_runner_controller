@@ -3,8 +3,12 @@
     python3 orangepi/check_config.py CONFIG.json
 
 It loads the file the same way the controller does (``rackctl.main.load_config`` and
-``machines_from``), so a file that passes here also starts there. Token files are not
-read: on a fresh controller they do not exist yet.
+``machines_from``) and checks the type and form of every key the controller reads. Token
+files are not read: on a fresh controller they do not exist yet.
+
+The SSH key, ``known_hosts`` and every token file must sit directly in ``/etc/rackctl``:
+the installer changes owners and modes of these files as root, so it must never be
+pointed at a file elsewhere.
 
 On success it prints one ``kind<TAB>value`` line per path the installer has to prepare:
 
@@ -25,19 +29,50 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from rackctl import actions, main  # noqa: E402  (needs the path above)
 
+ETC = "/etc/rackctl"
+FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+HOST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 RUNNERS_PATH = re.compile(r"^(repos/[^/\s]+/[^/\s]+|orgs/[^/\s]+)$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
+
+
+def in_etc(key: str, value) -> str:
+    if not isinstance(value, str) or os.path.dirname(value) != ETC or not FILE_NAME.match(os.path.basename(value)):
+        raise ValueError(f"{key} must be a file directly in {ETC}/ (letters, digits, '.', '_', '-')")
+    return value
+
+
+def positive_int(cfg: dict, key: str) -> None:
+    v = cfg[key]
+    if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+        raise ValueError(f"{key} must be a positive whole number")
 
 
 def check(path: str):
     cfg = main.load_config(path)
     out = []
-    if not isinstance(cfg.get("ssh_key"), str) or not os.path.isabs(cfg["ssh_key"]):
-        raise ValueError("ssh_key must be an absolute path")
-    out.append(("ssh_key", cfg["ssh_key"]))
-    if not os.path.isabs(cfg["known_hosts"]):
-        raise ValueError("known_hosts must be an absolute path")
-    out.append(("known_hosts", cfg["known_hosts"]))
+    if not isinstance(cfg["dry_run"], bool):
+        raise ValueError("dry_run must be true or false")
+    positive_int(cfg, "poll_seconds")
+    positive_int(cfg, "idle_minutes")
+    try:
+        ipaddress.IPv4Address(cfg["broadcast"])
+    except (ValueError, TypeError):
+        raise ValueError("broadcast must be an IPv4 address")
+    listen = cfg["metrics_listen"]
+    host, _, port = listen.rpartition(":") if isinstance(listen, str) else ("", "", "")
+    if not host or not port.isdigit() or not 0 < int(port) < 65536:
+        raise ValueError("metrics_listen must be <address>:<port>")
+    if not isinstance(cfg["state_file"], str) or not os.path.isabs(cfg["state_file"]):
+        raise ValueError("state_file must be an absolute path")
+    used = {
+        "ssh_key": in_etc("ssh_key", cfg.get("ssh_key")),
+        "known_hosts": in_etc("known_hosts", cfg["known_hosts"]),
+    }
+    if used["ssh_key"] == used["known_hosts"] or "/etc/rackctl/config.json" in used.values():
+        raise ValueError("ssh_key and known_hosts must be two files other than config.json")
+    out.append(("ssh_key", used["ssh_key"]))
+    out.append(("known_hosts", used["known_hosts"]))
 
     sources = cfg.get("sources")
     if not isinstance(sources, list) or not sources:
@@ -49,9 +84,10 @@ def check(path: str):
         repos = s.get("repos")
         if not isinstance(repos, list) or not repos or not all(REPO.match(str(r)) for r in repos):
             raise ValueError(f"{where}.repos must be a non-empty list of <owner>/<repo>")
-        token = s.get("token_file")
-        if not isinstance(token, str) or not os.path.isabs(token):
-            raise ValueError(f"{where}.token_file must be an absolute path")
+        token = in_etc(f"{where}.token_file", s.get("token_file"))
+        if token in used.values() or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
+            raise ValueError(f"{where}.token_file must not reuse another file's name")
+        used[f"token{i}"] = token
         out.append(("token", token))
 
     machines = main.machines_from(cfg)
@@ -62,12 +98,15 @@ def check(path: str):
         raise ValueError("machine names must be unique")
     for m in machines:
         actions.magic_packet(m.mac)  # raises on a malformed MAC
-        if not m.runner_prefixes or not all(m.runner_prefixes):
+        if not m.runner_prefixes or not all(isinstance(p, str) and p for p in m.runner_prefixes):
             raise ValueError(f"machine {m.name}: runner_prefixes must be non-empty strings")
+        if not isinstance(m.host, str) or "%" in m.host:
+            raise ValueError(f"machine {m.name}: host must be an address or a host name")
         try:
             ipaddress.ip_address(m.host)
         except ValueError:
-            if not re.match(r"^[A-Za-z0-9.-]+$", m.host):
+            # Not starting with "-": the host is passed to ssh-keyscan and ssh.
+            if not HOST_NAME.match(m.host):
                 raise ValueError(f"machine {m.name}: host must be an address or a host name")
         if not re.match(r"^[a-z_][a-z0-9_-]*$", m.ssh_user):
             raise ValueError(f"machine {m.name}: ssh_user is not a valid user name")

@@ -18,7 +18,8 @@ mkdir "$W/x"
 tar -xzf "$W/b.tar.gz" -C "$W/x"
 
 step "first install: no tokens yet, so the service must not start"
-OUT="$(sudo bash "$W/x/orangepi/install.sh" --config "$W/x/config.json" --version smoke 2>&1)"
+OUT="$(sudo bash "$W/x/orangepi/install.sh" --config "$W/x/config.json" --version smoke 2>&1)" \
+  || { echo "$OUT"; fail "first install failed"; }
 echo "$OUT"
 grep -q "NOT started" <<<"$OUT" || fail "service started without tokens"
 grep -q "missing token /etc/rackctl/token-example-org:" <<<"$OUT" || fail "missing token not reported"
@@ -33,25 +34,28 @@ id rackctl >/dev/null || fail "no rackctl user"
 [ -f /etc/systemd/journald.conf.d/50-rackctl-volatile.conf ] || fail "journald drop-in"
 systemctl is-enabled --quiet rackctl || fail "service not enabled"
 ! systemctl is-active --quiet rackctl || fail "service active without tokens"
-FP1="$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519.pub)"
+FP1="$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519)"  # the private key itself
 
 step "tokens"
 if printf '\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-empty; then
   fail "empty token accepted"
 fi
-if printf 'x\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token ../escape; then
-  fail "token name with a slash accepted"
-fi
+for bad in ../escape .. config.json id_ed25519 known_hosts id_ed25519.pub; do
+  if printf 'x\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token "$bad"; then
+    fail "token name $bad accepted"
+  fi
+done
+[ "$(mode_owner /etc/rackctl/config.json)" = "640 root" ] || fail "config.json touched by --set-token"
 printf 'not-a-real-token\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-example-org
 printf '  not-a-real-token-2 \n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-example-org2
 [ "$(mode_owner /etc/rackctl/token-example-org)" = "600 rackctl" ] || fail "token mode"
 [ "$(sudo cat /etc/rackctl/token-example-org2)" = not-a-real-token-2 ] || fail "token not trimmed"
 
 step "second install, in place: starts, keeps the key"
-OUT="$(sudo bash /opt/rackctl/orangepi/install.sh 2>&1)"
+OUT="$(sudo bash /opt/rackctl/orangepi/install.sh 2>&1)" || { echo "$OUT"; fail "second install failed"; }
 echo "$OUT"
 grep -q "rackctl is running" <<<"$OUT" || fail "service did not start"
-[ "$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519.pub)" = "$FP1" ] || fail "SSH key was replaced"
+[ "$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519)" = "$FP1" ] || fail "SSH key was replaced"
 [ "$(cat /opt/rackctl/VERSION)" = smoke ] || fail "VERSION lost on an in-place run"
 
 step "metrics"

@@ -68,7 +68,8 @@ orangepi/deploy.sh <ssh-target> v0.1.0 /path/to/your/config.json
 ```
 
 `deploy.sh` packs that tag's code (`git archive`, not your working tree) and your
-`config.json`, checks the configuration with that version's checker, copies the bundle
+`config.json`, checks the configuration with that version's checker (the SSH key,
+`known_hosts` and the token files must be directly in `/etc/rackctl/`), copies the bundle
 with `scp` and runs `orangepi/install.sh` on the board with `sudo`. The board needs no
 access to GitHub for this.
 
@@ -91,7 +92,8 @@ access to GitHub for this.
 8. installs and enables `rackctl.service`, and starts it only if every token file the
    configuration names exists and is readable by `rackctl`.
 
-It never replaces an existing SSH key, host key or token. Run it again at any time:
+A run without `--set-token` never replaces an existing SSH key, host key or token. Run it
+again at any time:
 
 ```bash
 sudo bash /opt/rackctl/orangepi/install.sh
