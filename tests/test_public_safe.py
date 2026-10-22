@@ -165,7 +165,7 @@ class RepositoryTest(unittest.TestCase):
 
     def leak_also_at_the_guard_path(self, d, git, tag_only):
         """The same leaking content at b.txt in an older commit and later at the guard's
-        own path, which is excluded from scanning."""
+        own path; both are scanned."""
         leak = f"host {PRIV}\n"
         with open(os.path.join(d, "b.txt"), "w", encoding="utf-8") as f:
             f.write(leak)
@@ -194,7 +194,7 @@ class RepositoryTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("scripts/public_safe.py", out)
 
-    def test_content_at_the_guard_path_and_elsewhere_is_scanned_elsewhere(self):
+    def test_content_at_the_guard_path_and_elsewhere_is_found(self):
         for tag_only in (False, True):
             code, out = self.run_in_repo(
                 ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only))
