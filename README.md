@@ -204,7 +204,7 @@ the job asks for. This is the same rule GitHub uses to assign jobs.
 
 A **machine** has:
 
-- `name`;
+- `name`: letters, digits, `.`, `_` and `-` (it is also the machine label in `/metrics`);
 - `mac` and `host`;
 - `ssh_user` (defaults to `name`);
 - `runner_prefixes`: every runner whose name starts with one of them belongs to this
@@ -294,9 +294,11 @@ python3 scripts/public_safe.py --history
 ```
 
 Lint, formatting, types and coverage use pinned tools (installed by hash, never a newer
-release by surprise):
+release by surprise). They need Python 3.10 or newer (CI uses 3.13), in a virtual
+environment:
 
 ```bash
+python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install --require-hashes --no-deps -r requirements-dev.txt
 ruff check . && ruff format --check . && mypy
 coverage run -m unittest discover -s tests -t . && coverage report
