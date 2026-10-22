@@ -57,8 +57,8 @@ def sources_from(cfg: dict) -> List[Source]:
 
 # --- state on disk --------------------------------------------------------------------
 # Only what cannot be learned from GitHub: when each machine was last online (the 14-day
-# rule) and until when it is held awake after a weekly wake. Written only on change, so
-# the SD card sees a few writes a day.
+# rule) and until when it is held awake after a weekly wake. Written only on change: a
+# few writes a day, which is gentle on an SD card.
 
 PERSISTED = ("last_online", "hold_until")
 

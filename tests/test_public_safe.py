@@ -86,7 +86,8 @@ class RepositoryTest(unittest.TestCase):
         old = os.getcwd()
         with tempfile.TemporaryDirectory() as d:
             env = dict(os.environ, GIT_AUTHOR_NAME=author, GIT_COMMITTER_NAME="t",
-                       GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com")
+                       GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com",
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", HOME=d)
 
             def git(*a):
                 subprocess.run(["git", "-c", "tag.gpgSign=false", "-c", "commit.gpgSign=false", *a],
@@ -124,15 +125,28 @@ class RepositoryTest(unittest.TestCase):
     def test_commit_message_and_author_name_are_scanned(self):
         code, out = self.run_in_repo(["x\n"], message=f"fix\n\nCo-Authored-By: {TOOL} <a@example.com>")
         self.assertEqual(code, 1)
-        self.assertIn("(message)", out)
+        self.assertRegex(out, r"commit [0-9a-f]{7}:\d+: AI attribution")
         code, out = self.run_in_repo(["x\n"], author=TOOL)
         self.assertEqual(code, 1)
-        self.assertIn("(author, committer)", out)
+        self.assertRegex(out, r"commit [0-9a-f]{7}:\d+: AI attribution")
+
+    def test_a_message_with_control_characters_does_not_crash(self):
+        self.assertEqual(self.run_in_repo(["x\n"], message="a\x1eb"), (0, ""))
+
+    def test_a_tag_pointing_straight_at_a_blob_is_scanned(self):
+        def after(d, git):
+            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=d, capture_output=True,
+                                  input=f"host {PRIV}\n".encode(), check=True).stdout.decode().strip()
+            git("tag", "blobtag", blob)
+
+        code, out = self.run_in_repo(["x\n"], after=after)
+        self.assertEqual(code, 1)
+        self.assertIn(f"(blob)", out)
 
     def test_annotated_tag_message_is_scanned(self):
         code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
         self.assertEqual(code, 1)
-        self.assertIn("tag v1 (message)", out)
+        self.assertRegex(out, r"tag object [0-9a-f]{7} \(v1\):\d+: private address")
 
     def test_file_that_is_not_utf8_is_still_read(self):
         code, out = self.run_in_repo([f"ip {PRIV} ".encode() + b"\xe0\n"], raw=True, history=False)
@@ -147,6 +161,57 @@ class RepositoryTest(unittest.TestCase):
             os.remove(os.path.join(d, "a.txt"))
 
         self.assertEqual(self.run_in_repo(["x\n"], after=after), (0, ""))
+
+
+    def leak_also_at_the_guard_path(self, d, git, tag_only):
+        """The same leaking content at b.txt in an older commit and later at the guard's
+        own path; both are scanned."""
+        leak = f"host {PRIV}\n"
+        with open(os.path.join(d, "b.txt"), "w", encoding="utf-8") as f:
+            f.write(leak)
+        git("add", "b.txt")
+        git("commit", "-q", "-m", "b")
+        if tag_only:
+            git("tag", "side")
+            git("reset", "-q", "--hard", "HEAD~1")
+        else:
+            git("rm", "-q", "b.txt")
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        with open(os.path.join(d, "scripts", "public_safe.py"), "w", encoding="utf-8") as f:
+            f.write(leak)
+        git("add", "scripts/public_safe.py")
+        git("commit", "-q", "-m", "guard")
+
+    def test_a_leak_inside_the_guard_file_itself_is_found(self):
+        def after(d, git):
+            os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+            with open(os.path.join(d, "scripts", "public_safe.py"), "w", encoding="utf-8") as f:
+                f.write(f"# host {PRIV}\n")
+            git("add", "scripts/public_safe.py")
+            git("commit", "-q", "-m", "guard")
+
+        code, out = self.run_in_repo(["x\n"], after=after)
+        self.assertEqual(code, 1)
+        self.assertIn("scripts/public_safe.py", out)
+
+    def test_content_at_the_guard_path_and_elsewhere_is_found(self):
+        for tag_only in (False, True):
+            code, out = self.run_in_repo(
+                ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only))
+            self.assertEqual(code, 1, tag_only)
+            self.assertIn(f"private address {PRIV}", out, tag_only)
+
+
+class GuardSourceTest(unittest.TestCase):
+    def test_the_guard_finds_nothing_in_its_own_source(self):
+        # It is scanned like any other file; a pattern written out in it would fail CI.
+        path = os.path.join(os.path.dirname(__file__), "..", "scripts", "public_safe.py")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(ps.scan_lines("scripts/public_safe.py", f.read()), [])
+
+    def test_earlier_versions_are_listed_by_full_object_id(self):
+        for sha in ps.EARLIER_VERSIONS_OF_THIS_FILE:
+            self.assertRegex(sha, r"^[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

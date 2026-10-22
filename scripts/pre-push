@@ -13,12 +13,19 @@ if [ ! -f "$guard" ]; then
 fi
 
 failed=0
-# git passes one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+# git passes one line per ref: <local ref> <local sha> <remote ref> <remote sha>. The sha
+# may be a commit or a tag object; the guard checks what that one object brings.
 while read -r local_ref local_sha _remote_ref _remote_sha; do
   [[ "$local_sha" =~ ^0+$ ]] && continue  # deleting a remote ref: nothing to check
-  if ! (cd "$root" && python3 "$guard" --history --rev "$local_sha" >&2); then
-    echo "pre-push: $local_ref ($local_sha) holds the findings above; push refused" >&2
-    failed=1
-  fi
+  rc=0
+  (cd "$root" && python3 "$guard" --history --rev "$local_sha" </dev/null >&2) || rc=$?
+  case "$rc" in
+    0) ;;
+    1) echo "pre-push: $local_ref ($local_sha) holds the findings above; push refused" >&2; failed=1 ;;
+    *) echo "pre-push: the guard could not check $local_ref (exit $rc: see the error above;" \
+            "on a branch with an older scripts/public_safe.py, update it or check out one with" \
+            "the current guard); push refused." >&2
+       failed=1 ;;
+  esac
 done
 exit "$failed"

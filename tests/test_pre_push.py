@@ -16,12 +16,15 @@ class PrePushHookTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
+        # Hermetic: none of the user's git configuration (a global core.hooksPath would put
+        # the hook into the user's real hooks directory).
         self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_COMMITTER_NAME="t",
-                        GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com")
+                        GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com",
+                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", HOME=self.tmp)
         self.remote = os.path.join(self.tmp, "remote.git")
         self.work = os.path.join(self.tmp, "work")
-        subprocess.run(["git", "init", "-q", "--bare", self.remote], check=True)
-        subprocess.run(["git", "init", "-q", self.work], check=True)
+        subprocess.run(["git", "init", "-q", "--bare", self.remote], check=True, env=self.env)
+        subprocess.run(["git", "init", "-q", self.work], check=True, env=self.env)
         self.git("remote", "add", "origin", self.remote)
         os.makedirs(os.path.join(self.work, "scripts"))
         for name in ("__init__.py", "public_safe.py", "pre-push", "install-hooks.sh"):
@@ -50,7 +53,7 @@ class PrePushHookTest(unittest.TestCase):
 
     def remote_sha(self, ref):
         out = subprocess.run(["git", "--git-dir", self.remote, "rev-parse", "--verify", "-q", ref],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, env=self.env)
         return out.stdout.strip() or None
 
     def test_clean_push_goes_through(self):
@@ -84,6 +87,81 @@ class PrePushHookTest(unittest.TestCase):
         self.assertEqual(self.push("other").returncode, 0)
         self.assertEqual(self.push("--delete", "other").returncode, 0)
         self.assertIsNone(self.remote_sha("other"))
+
+    def test_annotated_tag_with_a_leak_in_its_message_is_refused(self):
+        self.git("tag", "-a", "v1", "-m", f"release, host {PRIV}")
+        out = self.push("v1")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(f"private address {PRIV}", out.stderr)
+        self.assertIsNone(self.remote_sha("refs/tags/v1"))
+
+    def test_tag_object_pushed_by_id_without_a_local_tag_is_refused(self):
+        self.git("tag", "-a", "v2", "-m", f"host {PRIV}")
+        sha = self.git("rev-parse", "v2")
+        self.git("tag", "-d", "v2")
+        out = self.push(f"{sha}:refs/tags/v2")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIsNone(self.remote_sha("refs/tags/v2"))
+
+    def test_leak_in_a_nested_tag_is_refused(self):
+        self.git("tag", "-a", "inner", "-m", f"host {PRIV}")
+        self.git("tag", "-a", "outer", "-m", "fine", "inner")
+        self.git("tag", "-d", "inner")
+        out = self.push("outer")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIsNone(self.remote_sha("refs/tags/outer"))
+
+    def test_a_blob_pushed_as_a_tag_is_refused(self):
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=self.work, env=self.env,
+                              input=f"host {PRIV}\n".encode(), capture_output=True, check=True).stdout.decode().strip()
+        out = self.push(f"{blob}:refs/tags/blobtag")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(f"private address {PRIV}", out.stderr)
+        self.assertIsNone(self.remote_sha("refs/tags/blobtag"))
+
+    def chain(self, depth, leak=False):
+        """A chain of `depth` nested annotated tags; only the outermost keeps a ref."""
+        self.git("tag", "-a", "c1", "-m", f"host {PRIV}" if leak else "start")
+        for i in range(2, depth + 1):
+            self.git("tag", "-a", f"c{i}", "-m", "x", f"c{i - 1}")
+            self.git("tag", "-d", f"c{i - 1}")
+        return f"c{depth}"
+
+    def test_a_chain_of_exactly_one_hundred_tags_is_read_in_full(self):
+        out = self.push(self.chain(100))
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_a_leak_at_the_bottom_of_a_long_chain_is_refused(self):
+        out = self.push(self.chain(100, leak=True))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(f"private address {PRIV}", out.stderr)
+
+    def test_a_chain_too_long_to_read_is_refused_not_passed(self):
+        tag = self.chain(101)
+        out = self.push(tag)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("could not check", out.stderr)
+        self.assertIsNone(self.remote_sha(f"refs/tags/{tag}"))
+
+    def test_a_local_tag_that_is_not_pushed_does_not_block_a_clean_push(self):
+        branch = self.git("branch", "--show-current")
+        self.git("tag", "-a", "private-note", "-m", f"host {PRIV}")
+        out = self.push(branch)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_an_old_guard_without_rev_refuses_with_a_clear_message(self):
+        guard = Path(self.work, "scripts", "public_safe.py")
+        guard.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+        out = self.push(self.git("branch", "--show-current"))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("could not check", out.stderr)
+
+    def test_installer_refuses_when_core_hooks_path_is_set(self):
+        self.git("config", "core.hooksPath", ".githooks")
+        out = self.run_cmd(["bash", "scripts/install-hooks.sh", "--force"])
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("core.hooksPath", out.stderr)
+        self.assertFalse(Path(self.work, ".githooks", "pre-push").exists())
 
     def test_installer_does_not_replace_a_different_hook_without_force(self):
         hook = Path(self.work, ".git", "hooks", "pre-push")

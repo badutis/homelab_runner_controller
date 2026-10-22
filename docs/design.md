@@ -103,12 +103,13 @@ that hour. If one of them needs a reboot, `rack-sleep` reboots instead of suspen
 without the restriction, so the key never gives a full shell. It also refuses to install
 the key for the account that runs CI jobs (`--ci-user`).
 
-## SD card
+## Disk writes
 
-The controller writes the state file only when a machine's "last online" day or its
-hold changes, a few times a day. `orangepi/install.sh` keeps the systemd journal in RAM
-(`Storage=volatile`, at most 16 MB). On Armbian, the other logs already go to RAM
-(`armbian-ramlog`).
+The controller writes the state file only when a machine's "last online" day or its hold
+changes, a few times a day, which is gentle on an SD card. On a board that runs from one,
+`controller/install.sh --ram-journal` also keeps the systemd journal of the whole host in RAM
+(`Storage=volatile`, at most 16 MB). It is opt-in, because all logs are then lost on
+reboot. On Armbian the other logs already go to RAM (`armbian-ramlog`).
 
 ## Dry run
 

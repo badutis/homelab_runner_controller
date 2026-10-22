@@ -9,10 +9,13 @@ a recognisable shape:
 - names of AI tools, as attribution.
 
 It checks every file in the index. With ``--history`` it also checks every version of
-every file in the history of ``HEAD``, every commit message, author and committer, and
-every tag's message and tagger. ``--rev SHA`` scans that commit's history instead of
-``HEAD`` (and skips the index): the pre-push hook (``scripts/install-hooks.sh``) runs it
-for each commit about to be pushed, so a leak is stopped before it reaches GitHub.
+every file in the history of ``HEAD`` and of every tag, every commit message, author and
+committer in them, and every tag object (message and tagger, nested tags included).
+
+``--rev SHA`` (with ``--history``) checks only what that one object brings: the history of
+the commit, or of the commit a tag points at, plus the tag object chain. It skips the index
+and the other local tags. The pre-push hook (``scripts/install-hooks.sh``) runs it for each
+ref about to be pushed, so a leak is stopped before it reaches GitHub.
 
 Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 198.51.100.0/24, 203.0.113.0/24; RFC 3849: 2001:db8::/32), the documentation MAC range
@@ -20,12 +23,12 @@ Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 addresses.
 
 Not caught: public addresses, MAC addresses written as 12 hex digits without separators
-(they cannot be told apart from hashes), UTF-16 files (read as binary), commits that only
-a tag points at, and names of real machines, users or
-repositories. A public list of those would itself leak them, so keeping them out stays
+(they cannot be told apart from hashes), UTF-16 files (read as binary), and names of real
+machines, users or repositories. A public list of those would itself leak them, so keeping them out stays
 the author's job.
 
-Exit code 0 when clean, 1 with one line per finding otherwise.
+Exit code 0 when clean, 1 with one line per finding, 2 for a usage error and 3 when git
+itself fails (so the pre-push hook can tell a finding from a broken run).
 """
 
 import argparse
@@ -35,21 +38,30 @@ import subprocess
 import sys
 from typing import Iterable, Iterator, List, Optional, Tuple
 
-# This file spells the patterns out, so it is not scanned. Its test builds its bad samples
-# at run time and is scanned like any other file.
-SELF = {"scripts/public_safe.py"}
+# This file is scanned like any other, so nothing in it may look like a finding: the
+# networks are numbers, not dotted text, and the tool names are built from pieces
+# (tests/test_public_safe.py checks this). Earlier versions of this file spelled the
+# patterns out; those exact versions, and only they, are skipped by content.
+EARLIER_VERSIONS_OF_THIS_FILE = frozenset(
+    {
+        "3dcfd868f25aa5a1df3eb47402d62195e26721c3",
+        "6c9a9be268bbec4b591b8a501038a5b18c3250cb",
+        "941f5fc56ebf9b4ad21eb0e4cff753f15d4b6b49",
+        "9e06094e2b33a1cc3fa08e590856bbb28ce56396",
+        "c2d487a9b878802870a85d897c1d2f5b5a77e2c0",
+        "c3d341dd8f702ac52ca005474a757bfd2d77b10c",
+        "e3ecc93cea68bd98eba1e14325a425c7744fe85a",
+    }
+)
 
 PRIVATE_NETS = [
-    ipaddress.ip_network(n)
-    for n in (
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "100.64.0.0/10",
-        "169.254.0.0/16",
-        "fc00::/7",
-        "fe80::/10",
-    )
+    ipaddress.IPv4Network((0x0A000000, 8)),
+    ipaddress.IPv4Network((0xAC100000, 12)),
+    ipaddress.IPv4Network((0xC0A80000, 16)),
+    ipaddress.IPv4Network((0x64400000, 10)),  # carrier-grade NAT
+    ipaddress.IPv4Network((0xA9FE0000, 16)),  # link-local
+    ipaddress.IPv6Network((0xFC << 120, 7)),  # unique-local
+    ipaddress.IPv6Network((0xFE80 << 112, 10)),  # link-local
 ]
 # A trailing dot ends a sentence and is allowed; a dot followed by a digit is not.
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d)(?!\.\d)")
@@ -62,15 +74,16 @@ MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9
 MAC_ALLOWED = re.compile(r"^(00005e0053[0-9a-f]{2}|f{12}|0{11}[0-9a-f])$")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_ALLOWED = re.compile(r"(@users\.noreply\.github\.com|^noreply@github\.com|@example\.(com|org|net))$", re.I)
-# Letters only around the name, so "claude_code" and "ClaudeCode" are caught too.
-AI = re.compile(r"(?<![A-Za-z])(claude|anthropic|chatgpt|openai|copilot)", re.I)
+# No letter before the name, so it is caught inside snake_case and CamelCase words too.
+AI_TOOLS = ("clau" + "de", "anthro" + "pic", "chat" + "gpt", "open" + "ai", "co" + "pilot")
+AI = re.compile(r"(?<![A-Za-z])(" + "|".join(AI_TOOLS) + ")", re.I)
 
 
 def _ipv4(text: str) -> Optional[ipaddress.IPv4Address]:
     parts = text.split(".")
     if any(int(p) > 255 for p in parts):
         return None
-    # "192.168.001.010" is refused by ipaddress, but it is still that address.
+    # Octets with leading zeros are refused by ipaddress, but they are still that address.
     return ipaddress.IPv4Address(".".join(str(int(p)) for p in parts))
 
 
@@ -130,49 +143,83 @@ def index_files() -> Iterable[Tuple[str, str]]:
             continue
         meta, path = entry.split("\t", 1)
         mode, sha = meta.split()[:2]
-        if path in SELF or mode == "160000":
+        if mode == "160000":
             continue
         text = decode(git("cat-file", "blob", sha))
         if text is not None:
             yield path, text
 
 
-def history_blobs(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    seen = set()
-    for line in git("rev-list", "--objects", rev, "--").decode(errors="replace").splitlines():
+def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
+    """(sha, type, content) for many objects in one ``git cat-file --batch`` call."""
+    if not shas:
+        return
+    out = subprocess.run(
+        ["git", "cat-file", "--batch"], input="\n".join(shas).encode() + b"\n",
+        check=True, capture_output=True,
+    ).stdout
+    pos = 0
+    while pos < len(out):
+        nl = out.index(b"\n", pos)
+        header = out[pos:nl].decode(errors="replace").split()
+        pos = nl + 1
+        if len(header) < 3:  # "<sha> missing"
+            continue
+        size = int(header[2])
+        yield header[0], header[1], out[pos : pos + size]
+        pos += size + 1  # the content is followed by a newline
+
+
+def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
+    """Every blob and every commit reachable from ``revs`` (commits read raw: author and
+    committer names and emails, and the message, whatever characters it holds). A blob
+    with no path is one a tag points at directly; it is scanned too."""
+    paths = {}
+    for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
-        if not path or path in SELF or sha in seen:
-            continue
+        paths.setdefault(sha, path)
+    for sha, kind, raw in read_objects(sorted(paths)):
+        path = paths[sha]
+        if kind == "blob" and sha not in EARLIER_VERSIONS_OF_THIS_FILE:
+            text = decode(raw)
+            if text is not None:
+                yield f"{path or '(blob)'}@{sha[:7]}", text
+        elif kind == "commit":
+            yield f"commit {sha[:7]}", raw.decode(errors="replace")
+
+
+def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[Tuple[str, str]]:
+    """Every tag object from ``sha`` down to what it finally points at (tags can be nested).
+    The raw object holds the tag name, the tagger and the message. Objects in ``seen`` are
+    not read again. With ``limit``, a longer chain is an error rather than a silent stop."""
+    depth = 0
+    while sha not in seen:
         seen.add(sha)
-        if git("cat-file", "-t", sha).strip() != b"blob":
-            continue
-        text = decode(git("cat-file", "blob", sha))
-        if text is not None:
-            yield f"{path}@{sha[:7]}", text
+        kind, raw = next(((k, r) for _, k, r in read_objects([sha])), ("missing", b""))
+        if kind != "tag":
+            return
+        depth += 1
+        if limit is not None and depth > limit:
+            raise RuntimeError(f"tag chain longer than {limit} objects at {sha[:7]}")
+        text = raw.decode(errors="replace")
+        yield f"tag object {sha[:7]}", text
+        target = re.search(r"^object ([0-9a-f]+)$", text, re.M)
+        if not target:
+            return
+        sha = target.group(1)
 
 
-def commits(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    sep = "\x1e"
-    log = git("log", rev, f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode(errors="replace")
-    for entry in log.split(sep):
-        entry = entry.strip("\n")
-        if not entry:
-            continue
-        sha, people, body = entry.split("\0", 2)
-        yield f"commit {sha} (author, committer)", people
-        yield f"commit {sha} (message)", body
+def tag_refs() -> List[Tuple[str, str]]:
+    out = git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace")
+    return [tuple(line.split(" ", 1)) for line in out.splitlines() if " " in line]
 
 
-def tags() -> Iterable[Tuple[str, str]]:
-    sep = "\x1e"
-    out = git("for-each-ref", "refs/tags", f"--format=%(refname:short)%00%(taggername) %(taggeremail)%00%(contents){sep}")
-    for entry in out.decode(errors="replace").split(sep):
-        entry = entry.strip("\n")
-        if not entry:
-            continue
-        name, tagger, body = entry.split("\0", 2)
-        yield f"tag {name} (tagger)", tagger
-        yield f"tag {name} (message)", body
+def tags(refs: List[Tuple[str, str]]) -> Iterable[Tuple[str, str]]:
+    """The tag objects of every local tag, nested ones included, each read once."""
+    seen: set = set()
+    for sha, name in refs:
+        for where, text in tag_chain(sha, seen):
+            yield f"{where} ({name})", text
 
 
 def main(argv=None) -> int:
@@ -189,14 +236,26 @@ def main(argv=None) -> int:
     if args.rev and not re.match(r"^[0-9a-f]{7,64}$", args.rev):
         ap.error("--rev must be a commit id")
     found: List[str] = []
-    if not args.rev:
-        for where, text in index_files():
-            found += scan_lines(where, text)
-    if args.history:
-        rev = args.rev or "HEAD"
-        for source in (history_blobs(rev), commits(rev), tags()):
-            for where, text in source:
+    try:
+        if not args.rev:
+            for where, text in index_files():
                 found += scan_lines(where, text)
+        if args.history:
+            if args.rev:
+                sources = (tag_chain(args.rev, set(), limit=100), history([args.rev]))
+            else:
+                refs = tag_refs()
+                sources = (history(["HEAD"] + [sha for sha, _ in refs]), tags(refs))
+            for source in sources:
+                for where, text in source:
+                    found += scan_lines(where, text)
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or b"").decode(errors="replace").strip()
+        print(f"git failed: {' '.join(e.cmd)}: {err}", file=sys.stderr)
+        return 3
+    except Exception as e:  # noqa: BLE001 — a crash must never read as "findings"
+        print(f"check failed: {e!r}", file=sys.stderr)
+        return 3
     for f in found:
         print(f)
     return 1 if found else 0

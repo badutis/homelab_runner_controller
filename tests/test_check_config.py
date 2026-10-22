@@ -8,11 +8,11 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(HERE / "orangepi"))
+sys.path.insert(0, str(HERE / "controller"))
 
 import check_config  # noqa: E402
 
-EXAMPLE = json.loads((HERE / "orangepi" / "config.example.json").read_text(encoding="utf-8"))
+EXAMPLE = json.loads((HERE / "controller" / "config.example.json").read_text(encoding="utf-8"))
 
 
 def run(cfg):

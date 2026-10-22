@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the controller from scratch on a disposable Linux machine with systemd and
 # checks the result. CI runs it on a GitHub-hosted runner; it needs passwordless sudo and
-# changes the system (user, /opt, /etc, a systemd unit), so do not run it on a real board.
+# changes the system (user, /opt, /etc, a systemd unit), so do not run it on a real host.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -13,12 +13,12 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
 step "bundle"
-orangepi/deploy.sh --bundle-only "$W/b.tar.gz" HEAD orangepi/config.example.json
+controller/deploy.sh --bundle-only "$W/b.tar.gz" HEAD controller/config.example.json
 mkdir "$W/x"
 tar -xzf "$W/b.tar.gz" -C "$W/x"
 
 step "first install: no tokens yet, so the service must not start"
-OUT="$(sudo bash "$W/x/orangepi/install.sh" --config "$W/x/config.json" --version smoke 2>&1)" \
+OUT="$(sudo bash "$W/x/controller/install.sh" --config "$W/x/config.json" --version smoke 2>&1)" \
   || { echo "$OUT"; fail "first install failed"; }
 echo "$OUT"
 grep -q "NOT started" <<<"$OUT" || fail "service started without tokens"
@@ -29,34 +29,36 @@ id rackctl >/dev/null || fail "no rackctl user"
 [ "$(mode_owner /etc/rackctl/id_ed25519)" = "600 rackctl" ] || fail "key: $(mode_owner /etc/rackctl/id_ed25519)"
 [ "$(mode_owner /etc/rackctl/config.json)" = "640 root" ] || fail "config: $(mode_owner /etc/rackctl/config.json)"
 [ -f /opt/rackctl/rackctl/__main__.py ] || fail "package not at /opt/rackctl/rackctl"
-[ -f /opt/rackctl/orangepi/install.sh ] || fail "installer not kept in /opt/rackctl/orangepi"
+[ -f /opt/rackctl/controller/install.sh ] || fail "installer not kept in /opt/rackctl/controller"
 [ "$(cat /opt/rackctl/VERSION)" = smoke ] || fail "VERSION"
-[ -f /etc/systemd/journald.conf.d/50-rackctl-volatile.conf ] || fail "journald drop-in"
+[ ! -e /etc/systemd/journald.conf.d/50-rackctl-volatile.conf ] || fail "journal changed without --ram-journal"
 systemctl is-enabled --quiet rackctl || fail "service not enabled"
 ! systemctl is-active --quiet rackctl || fail "service active without tokens"
 FP1="$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519)"  # the private key itself
 
 step "tokens"
-if printf '\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-empty; then
+if printf '\n' | sudo bash /opt/rackctl/controller/install.sh --set-token token-empty; then
   fail "empty token accepted"
 fi
 for bad in ../escape .. config.json id_ed25519 known_hosts id_ed25519.pub; do
-  if printf 'x\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token "$bad"; then
+  if printf 'x\n' | sudo bash /opt/rackctl/controller/install.sh --set-token "$bad"; then
     fail "token name $bad accepted"
   fi
 done
 [ "$(mode_owner /etc/rackctl/config.json)" = "640 root" ] || fail "config.json touched by --set-token"
-printf 'not-a-real-token\n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-example-org
-printf '  not-a-real-token-2 \n' | sudo bash /opt/rackctl/orangepi/install.sh --set-token token-example-org2
+printf 'not-a-real-token\n' | sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org
+printf '  not-a-real-token-2 \n' | sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org2
 [ "$(mode_owner /etc/rackctl/token-example-org)" = "600 rackctl" ] || fail "token mode"
 [ "$(sudo cat /etc/rackctl/token-example-org2)" = not-a-real-token-2 ] || fail "token not trimmed"
 
-step "second install, in place: starts, keeps the key"
-OUT="$(sudo bash /opt/rackctl/orangepi/install.sh 2>&1)" || { echo "$OUT"; fail "second install failed"; }
+step "second install, in place, with --ram-journal: starts, keeps the key"
+OUT="$(sudo bash /opt/rackctl/controller/install.sh --ram-journal 2>&1)" || { echo "$OUT"; fail "second install failed"; }
 echo "$OUT"
 grep -q "rackctl is running" <<<"$OUT" || fail "service did not start"
 [ "$(sudo ssh-keygen -lf /etc/rackctl/id_ed25519)" = "$FP1" ] || fail "SSH key was replaced"
 [ "$(cat /opt/rackctl/VERSION)" = smoke ] || fail "VERSION lost on an in-place run"
+grep -qx 'Storage=volatile' /etc/systemd/journald.conf.d/50-rackctl-volatile.conf || fail "--ram-journal had no effect"
+grep -q "host: .*, $(uname -m), " <<<"$OUT" || fail "host line missing"
 
 step "metrics"
 for _ in $(seq 1 30); do
