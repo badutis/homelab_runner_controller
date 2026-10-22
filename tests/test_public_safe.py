@@ -40,6 +40,8 @@ class AddressTest(unittest.TestCase):
         self.assertEqual(found(f"addr {ula}"), [f"private address {ula}"])
         self.assertTrue(found("fe" + "80::1%eth0"))
         self.assertEqual(found("2001:db8::1"), [])
+        self.assertEqual(found("2001:db8:10:20:30:40:50:60"), [])
+        self.assertEqual(found(f"addr:{ula}"), [f"private address {ula}"])
 
     def test_documentation_public_and_special_addresses_pass(self):
         for ip in ("192.0.2.11", "198.51.100.7", "203.0.113.9", "0.0.0.0:9105", "127.0.0.1",
@@ -51,7 +53,8 @@ class MacTest(unittest.TestCase):
     def test_real_looking_mac_is_refused_in_every_notation(self):
         dashed = MAC.replace(":", "-").upper()
         dotted = "fc3f" + DOT + "db12" + DOT + "3456"
-        for text in (f"mac {MAC}", f"mac {dashed}", f"mac{COLON}{MAC}", f"a-{MAC}", f"hwaddr {MAC}:", dotted):
+        for text in (f"mac {MAC}", f"mac {dashed}", f"mac{COLON}{MAC}", f"a-{MAC}", f"hwaddr {MAC}:", dotted,
+                     f"switch shows {dotted}."):
             self.assertEqual(len(found(text)), 1, text)
 
     def test_documentation_and_placeholder_macs_pass(self):

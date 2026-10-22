@@ -18,7 +18,8 @@ Allowed placeholders: the documentation address ranges (RFC 5737: 192.0.2.0/24,
 addresses.
 
 Not caught: public addresses, MAC addresses written as 12 hex digits without separators
-(they cannot be told apart from hashes), and names of real machines, users or
+(they cannot be told apart from hashes), UTF-16 files (read as binary), commits that only
+a tag points at, and names of real machines, users or
 repositories. A public list of those would itself leak them, so keeping them out stays
 the author's job.
 
@@ -50,11 +51,12 @@ PRIVATE_NETS = [
 ]
 # A trailing dot ends a sentence and is allowed; a dot followed by a digit is not.
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d)(?!\.\d)")
-IPV6 = re.compile(r"(?<![0-9A-Fa-f:])((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I)
+IPV6 = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]:)(?<!::)((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I)
 # A run of six or more hex pairs: the text right before a MAC may itself look like a
 # pair ("mac:fc:..."), so the run is reported unless some six-pair window of it is allowed.
-MAC_RUN = re.compile(r"(?<![0-9A-Fa-f])((?:[0-9A-Fa-f]{2}[:-]){5,}[0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
-MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f.])")
+# Not after a 3–4 digit group and a colon: that is the tail of an IPv6 address.
+MAC_RUN = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]{3}:)((?:[0-9A-Fa-f]{2}[:-]){5,}[0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
+MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f])(?!\.[0-9A-Fa-f])")
 MAC_ALLOWED = re.compile(r"^(00005e0053[0-9a-f]{2}|f{12}|0{11}[0-9a-f])$")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_ALLOWED = re.compile(r"(@users\.noreply\.github\.com|^noreply@github\.com|@example\.(com|org|net))$", re.I)
@@ -121,7 +123,7 @@ def decode(raw: bytes) -> Optional[str]:
 def index_files() -> Iterable[Tuple[str, str]]:
     # The committed content, not the working tree: a symlink is read as its target path,
     # a submodule (mode 160000) is skipped, a file deleted from disk does not crash.
-    for entry in git("ls-files", "-s", "-z").decode().split("\0"):
+    for entry in git("ls-files", "-s", "-z").decode(errors="replace").split("\0"):
         if not entry:
             continue
         meta, path = entry.split("\t", 1)
@@ -135,7 +137,7 @@ def index_files() -> Iterable[Tuple[str, str]]:
 
 def history_blobs() -> Iterable[Tuple[str, str]]:
     seen = set()
-    for line in git("rev-list", "--objects", "HEAD").decode().splitlines():
+    for line in git("rev-list", "--objects", "HEAD").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         if not path or path in SELF or sha in seen:
             continue
@@ -149,7 +151,7 @@ def history_blobs() -> Iterable[Tuple[str, str]]:
 
 def commits() -> Iterable[Tuple[str, str]]:
     sep = "\x1e"
-    log = git("log", "HEAD", f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode()
+    log = git("log", "HEAD", f"--format=%h%x00%an <%ae>%n%cn <%ce>%x00%B{sep}").decode(errors="replace")
     for entry in log.split(sep):
         entry = entry.strip("\n")
         if not entry:
@@ -162,7 +164,7 @@ def commits() -> Iterable[Tuple[str, str]]:
 def tags() -> Iterable[Tuple[str, str]]:
     sep = "\x1e"
     out = git("for-each-ref", "refs/tags", f"--format=%(refname:short)%00%(taggername) %(taggeremail)%00%(contents){sep}")
-    for entry in out.decode().split(sep):
+    for entry in out.decode(errors="replace").split(sep):
         entry = entry.strip("\n")
         if not entry:
             continue

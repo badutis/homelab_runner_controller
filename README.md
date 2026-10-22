@@ -156,7 +156,7 @@ infrastructure repository.
 
 `scripts/public_safe.py` catches the leaks that have a recognisable shape: private
 addresses, MAC addresses, personal emails and AI attribution. It checks the whole history
-of the branch and its tags, not only the latest commit. It cannot recognise public
+of the branch and every tag's message and tagger, not only the latest commit. It cannot recognise public
 addresses or the names of real machines, users and repositories. Keeping those out is
 up to the author.
 
