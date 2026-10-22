@@ -25,6 +25,11 @@ The first release under the WakeCI name.
 - Release workflow: checked tag, build tools pinned by hash, `SHA256SUMS`, build provenance
   attestation.
 - CI: lint (ruff), types (mypy), coverage (at least 80%).
+- Project files: SECURITY.md (private vulnerability reporting), CONTRIBUTING.md, the
+  Contributor Covenant code of conduct, issue and pull request templates.
+- Every pull request commit must be signed off (DCO), checked in CI.
+- Dependabot keeps the pinned CI actions and dev tools current (releases at least 14 days
+  old); CodeQL and secret scanning are on.
 
 ## [0.3.0] - 2026-10-22
 

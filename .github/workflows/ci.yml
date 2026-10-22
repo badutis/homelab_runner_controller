@@ -84,6 +84,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: tests/install_smoke.sh
 
+  # Every commit of a pull request is signed off (Developer Certificate of Origin).
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 scripts/dco.py "$BASE" "$HEAD"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+
   public-safe:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

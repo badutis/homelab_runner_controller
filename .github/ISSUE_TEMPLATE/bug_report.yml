@@ -1,0 +1,41 @@
+name: Bug report
+description: WakeCI did something wrong or failed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Please remove anything specific to your installation: real IP and MAC addresses,
+        machine, user and repository names, tokens. Use 192.0.2.x, 00:00:5e:00:53:xx and
+        example-org instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `wakeci version`.
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Controller host
+      description: OS and version, architecture (e.g. Debian 13, arm64).
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The configuration (with example values) and the steps.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "`journalctl -u wakeci -n 100`, with installation data removed."
+      render: text
