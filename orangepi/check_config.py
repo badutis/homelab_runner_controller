@@ -3,7 +3,8 @@
     python3 orangepi/check_config.py CONFIG.json
 
 It loads the file the same way the controller does (``rackctl.main.load_config`` and
-``machines_from``) and checks the type and form of every key the controller reads. Token
+``machines_from``) and checks the type and form of the settings, sources and machines
+(not every field: a machine's ``name`` and ``rank`` are taken as the controller reads them). Token
 files are not read: on a fresh controller they do not exist yet.
 
 The SSH key, ``known_hosts`` and every token file must sit directly in ``/etc/rackctl``:
@@ -69,7 +70,11 @@ def check(path: str):
         "ssh_key": in_etc("ssh_key", cfg.get("ssh_key")),
         "known_hosts": in_etc("known_hosts", cfg["known_hosts"]),
     }
-    if used["ssh_key"] == used["known_hosts"] or "/etc/rackctl/config.json" in used.values():
+    if (
+        used["ssh_key"] == used["known_hosts"]
+        or used["known_hosts"] == used["ssh_key"] + ".pub"
+        or "/etc/rackctl/config.json" in used.values()
+    ):
         raise ValueError("ssh_key and known_hosts must be two files other than config.json")
     out.append(("ssh_key", used["ssh_key"]))
     out.append(("known_hosts", used["known_hosts"]))
@@ -85,9 +90,9 @@ def check(path: str):
         if not isinstance(repos, list) or not repos or not all(REPO.match(str(r)) for r in repos):
             raise ValueError(f"{where}.repos must be a non-empty list of <owner>/<repo>")
         token = in_etc(f"{where}.token_file", s.get("token_file"))
-        if token in used.values() or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
+        # Several sources may share one token file; it must only not be another kind of file.
+        if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
             raise ValueError(f"{where}.token_file must not reuse another file's name")
-        used[f"token{i}"] = token
         out.append(("token", token))
 
     machines = main.machines_from(cfg)

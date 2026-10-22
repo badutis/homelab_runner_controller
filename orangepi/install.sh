@@ -44,16 +44,18 @@ if [ -n "$TOKEN_NAME" ]; then
   [[ "$TOKEN_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
     || die "token name must start with a letter or digit and hold only letters, digits, '.', '_' and '-'"
   id "$SVC_USER" >/dev/null 2>&1 || die "install the controller first"
-  # Never one of the other files in $ETC.
+  # Never one of the other files in $ETC. The final mv replaces a symlink itself, it does
+  # not write through it.
   case "$TOKEN_NAME" in
-    config.json|*.pub) die "$TOKEN_NAME is not a token file name" ;;
+    config.json|*.pub|id_ed25519|known_hosts) die "$TOKEN_NAME is not a token file name" ;;
   esac
-  if [ -f "$ETC/config.json" ] && PATHS="$(python3 "$OPT/orangepi/check_config.py" "$ETC/config.json")"; then
+  if [ -f "$ETC/config.json" ]; then
+    PATHS="$(python3 "$OPT/orangepi/check_config.py" "$ETC/config.json")" \
+      || die "$ETC/config.json is invalid: fix it before setting tokens"
     if printf '%s\n' "$PATHS" | awk -F'\t' '$1 == "ssh_key" || $1 == "known_hosts" {print $2}' | grep -qxF "$ETC/$TOKEN_NAME"; then
       die "$ETC/$TOKEN_NAME is the SSH key or known_hosts, not a token"
     fi
   fi
-  [ ! -L "$ETC/$TOKEN_NAME" ] || die "$ETC/$TOKEN_NAME is a symlink"
 
   if [ -t 0 ]; then
     printf 'token for %s/%s (not shown): ' "$ETC" "$TOKEN_NAME" >&2

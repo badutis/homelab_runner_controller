@@ -42,6 +42,10 @@ class CheckConfigTest(unittest.TestCase):
         self.assertEqual([k for k, _ in lines].count("host"), 3)
         self.assertIn(["ssh_key", "/etc/rackctl/id_ed25519"], lines)
 
+    def test_sources_may_share_one_token_file(self):
+        cfg = changed(sources=lambda c: c["sources"][1].update(token_file=c["sources"][0]["token_file"]))
+        self.assertEqual(run(cfg)[0], 0)
+
     def test_bad_configurations_are_refused(self):
         cases = {
             "not json": "{",
@@ -51,6 +55,7 @@ class CheckConfigTest(unittest.TestCase):
             "known_hosts outside /etc/rackctl": changed(known_hosts="/etc/ssh/ssh_known_hosts"),
             "key in a subdirectory": changed(ssh_key="/etc/rackctl/keys/id"),
             "key is the config": changed(ssh_key="/etc/rackctl/config.json"),
+            "known_hosts is the public key": changed(known_hosts="/etc/rackctl/id_ed25519.pub"),
             "token is known_hosts": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/rackctl/known_hosts")),
             "token is the config": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/rackctl/config.json")),
             "token outside /etc/rackctl": changed(sources=lambda c: c["sources"][0].update(token_file="/var/lib/rackctl/t")),
