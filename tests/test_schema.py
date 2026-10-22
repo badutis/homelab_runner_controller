@@ -153,6 +153,13 @@ class SchemaTest(unittest.TestCase):
             lambda c: c["machines"][0].update(host="FILL-IN"),
             lambda c: c["machines"][0].update(mac="FILL-IN"),
             lambda c: c["machines"][0].update(ssh_user="FILL-IN"),
+            lambda c: c["machines"][0].update(name="FILL-IN"),
+            lambda c: c["machines"][0].update(runner_prefixes=["FILL-IN"]),
+            lambda c: c["sources"][0].update(repos=["example-org/FILL-IN"]),
+            lambda c: c["sources"][0].update(token_file="/etc/wakeci/FILL-IN"),
+            lambda c: c["notify"].update(url_file="/etc/wakeci/FILL-IN"),
+            lambda c: c.update(ssh_key="/etc/wakeci/FILL-IN"),
+            lambda c: c["machines"][0].update(runner_prefixes="host1-"),
         ):
             cfg = copy.deepcopy(EXAMPLE)
             change(cfg)

@@ -207,6 +207,9 @@ def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str
         raise ValueError("machines must be a list")
     for i, m in enumerate(cfg["machines"]):
         no_unknown_keys(f"machines[{i}]", m, MACHINE_KEYS)
+        # A string would pass as a list of one-letter prefixes.
+        if not isinstance(m.get("runner_prefixes"), list):
+            raise ValueError(f"machines[{i}].runner_prefixes must be a list")
     machines = main.machines_from(cfg)
     if not machines:
         raise ValueError("machines must not be empty")

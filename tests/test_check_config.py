@@ -33,6 +33,18 @@ def changed(**edits):
     return cfg
 
 
+# The rule that must refuse these, not just any rule.
+REASONS = {
+    "same mac twice": "have the same MAC",
+    "same host twice": "have the same host",
+    "same host name twice, other case": "have the same host",
+    "same prefix on two machines": "both have the runner prefix 'host1-a-'",
+    "prefixes not a list": "runner_prefixes must be a list",
+    "token file left as FILL-IN": "sources[0].token_file is still FILL-IN",
+    "repo left as FILL-IN": "sources[0].repos[0] is still FILL-IN",
+}
+
+
 class CheckConfigTest(unittest.TestCase):
     def test_example_passes_and_lists_every_path(self):
         code, out, _ = run(EXAMPLE)
@@ -82,6 +94,7 @@ class CheckConfigTest(unittest.TestCase):
             "host with an IPv6 scope": changed(
                 machines=lambda c: c["machines"][0].update(host="fe" + "80::1%$(reboot)")
             ),
+            "prefixes not a list": changed(machines=lambda c: c["machines"][0].update(runner_prefixes="host1-a-")),
             "prefix not a string": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[1])),
             "unknown top-level key": changed(idle_minute=30),
             "config_version true": changed(config_version=True),
@@ -147,6 +160,8 @@ class CheckConfigTest(unittest.TestCase):
             code, out, err = run(cfg)
             self.assertEqual((code, out), (1, ""), name)
             self.assertIn("invalid configuration", err, name)
+            if name in REASONS:
+                self.assertIn(REASONS[name], err, name)
 
     def test_a_placeholder_names_the_field_to_fill_in(self):
         cfg = changed(machines=lambda c: c["machines"][2].update(mac="FILL-IN", host="FILL-IN"))
