@@ -37,3 +37,34 @@ packages = ["wakeci"]
 
 [tool.setuptools.dynamic]
 version = { attr = "wakeci.__version__" }
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, bugbear, isort, pyupgrade (for 3.9) and simplify.
+select = ["E", "W", "F", "B", "I", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"  # the oldest mypy 2 can target; 3.9 itself is covered by the test matrix
+files = ["wakeci", "controller/check_config.py", "scripts/public_safe.py"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+
+[tool.coverage.run]
+source = ["wakeci"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

@@ -37,7 +37,7 @@ class CheckConfigTest(unittest.TestCase):
     def test_example_passes_and_lists_every_path(self):
         code, out, _ = run(EXAMPLE)
         self.assertEqual(code, 0)
-        lines = [l.split("\t") for l in out.splitlines()]
+        lines = [line.split("\t") for line in out.splitlines()]
         self.assertEqual([k for k, _ in lines].count("token"), 3)  # two sources and the webhook URL
         self.assertEqual([k for k, _ in lines].count("host"), 3)
         self.assertIn(["ssh_key", "/etc/wakeci/id_ed25519"], lines)
@@ -64,16 +64,24 @@ class CheckConfigTest(unittest.TestCase):
             "key in a subdirectory": changed(ssh_key="/etc/wakeci/keys/id"),
             "key is the config": changed(ssh_key="/etc/wakeci/config.json"),
             "known_hosts is the public key": changed(known_hosts="/etc/wakeci/id_ed25519.pub"),
-            "token is known_hosts": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/known_hosts")),
-            "token is the config": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/config.json")),
-            "token outside /etc/wakeci": changed(sources=lambda c: c["sources"][0].update(token_file="/var/lib/wakeci/t")),
+            "token is known_hosts": changed(
+                sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/known_hosts")
+            ),
+            "token is the config": changed(
+                sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/config.json")
+            ),
+            "token outside /etc/wakeci": changed(
+                sources=lambda c: c["sources"][0].update(token_file="/var/lib/wakeci/t")
+            ),
             "dry_run as text": changed(dry_run="false"),
             "idle_minutes as text": changed(idle_minutes="30"),
             "poll_seconds zero": changed(poll_seconds=0),
             "metrics_listen without address": changed(metrics_listen="9105"),
             "broadcast not an address": changed(broadcast="lan"),
             "host starting with a dash": changed(machines=lambda c: c["machines"][0].update(host="-oProxyCommand=x")),
-            "host with an IPv6 scope": changed(machines=lambda c: c["machines"][0].update(host="fe" + "80::1%$(reboot)")),
+            "host with an IPv6 scope": changed(
+                machines=lambda c: c["machines"][0].update(host="fe" + "80::1%$(reboot)")
+            ),
             "prefix not a string": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[1])),
             "unknown top-level key": changed(idle_minute=30),
             "config_version true": changed(config_version=True),
@@ -83,14 +91,24 @@ class CheckConfigTest(unittest.TestCase):
             "path with a newline": changed(ssh_key="/etc/wakeci/id_ed25519\n"),
             "ssh_user with a newline": changed(machines=lambda c: c["machines"][0].update(ssh_user="wakeci\n")),
             "repo with a newline": changed(sources=lambda c: c["sources"][0].update(repos=["o/r\n"])),
+            "state_file with a newline": changed(state_file="/var/lib/wakeci/s.json\n"),
+            "machine name with a newline": changed(machines=lambda c: c["machines"][0].update(name="host1\n")),
+            "machine name with a quote": changed(machines=lambda c: c["machines"][0].update(name='host"1')),
+            "prefix with a newline": changed(
+                machines=lambda c: c["machines"][0].update(runner_prefixes=["host1-a-\n"])
+            ),
             "unknown source key": changed(sources=lambda c: c["sources"][0].update(token="x")),
             "unknown machine key": changed(machines=lambda c: c["machines"][0].update(ip="x")),
             "machines not a list": changed(machines={"a": 1}),
             "notify not an object": changed(notify="yes"),
             "notify unknown key": changed(notify=lambda c: c["notify"].update(channel="x")),
             "notify url_file outside /etc/wakeci": changed(notify=lambda c: c["notify"].update(url_file="/tmp/u")),
-            "notify url_file is a token": changed(notify=lambda c: c["notify"].update(url_file=c["sources"][0]["token_file"])),
-            "notify url_file is the key": changed(notify=lambda c: c["notify"].update(url_file="/etc/wakeci/id_ed25519")),
+            "notify url_file is a token": changed(
+                notify=lambda c: c["notify"].update(url_file=c["sources"][0]["token_file"])
+            ),
+            "notify url_file is the key": changed(
+                notify=lambda c: c["notify"].update(url_file="/etc/wakeci/id_ed25519")
+            ),
             "notify bad format": changed(notify=lambda c: c["notify"].update(format="teams")),
             "notify no format": changed(notify=lambda c: c["notify"].pop("format")),
             "notify negative wait": changed(notify=lambda c: c["notify"].update(after_minutes=-1)),

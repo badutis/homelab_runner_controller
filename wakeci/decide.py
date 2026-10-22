@@ -10,7 +10,7 @@ has ALL of the job's labels, the same way GitHub assigns jobs.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class Machine:
     mac: str
     host: str
     ssh_user: str
-    runner_prefixes: Tuple[str, ...]
+    runner_prefixes: tuple[str, ...]
     rank: int  # lower is woken first (faster machines before slower ones)
 
     def owns(self, runner_name: str) -> bool:
@@ -31,13 +31,13 @@ class Runner:
     name: str
     online: bool
     busy: bool
-    labels: FrozenSet[str]
+    labels: frozenset[str]
     source: str = ""
 
 
 @dataclass(frozen=True)
 class QueuedJob:
-    labels: FrozenSet[str]  # lower case
+    labels: frozenset[str]  # lower case
     since: Optional[datetime] = None  # when the job was created (information only)
     source: str = ""
     id: Optional[int] = None
@@ -45,8 +45,8 @@ class QueuedJob:
 
 @dataclass(frozen=True)
 class Observation:
-    runners: Tuple[Runner, ...]
-    queued: Tuple[QueuedJob, ...]
+    runners: tuple[Runner, ...]
+    queued: tuple[QueuedJob, ...]
     # False when at least one source could not be read: it is then unknown whether any
     # runner of that machine is working, so nothing is suspended (waking is still allowed).
     complete: bool = True
@@ -99,18 +99,18 @@ class Action:
 
 
 def can_take(runner: Runner, job: QueuedJob) -> bool:
-    return runner.source == job.source and job.labels <= frozenset(l.lower() for l in runner.labels)
+    return runner.source == job.source and job.labels <= frozenset(lab.lower() for lab in runner.labels)
 
 
 @dataclass
 class Controller:
-    machines: Tuple[Machine, ...]
+    machines: tuple[Machine, ...]
     settings: Settings = field(default_factory=Settings)
-    state: Dict[str, MachineState] = field(default_factory=dict)
+    state: dict[str, MachineState] = field(default_factory=dict)
     # In dry run nothing is sent, so "did not wake" is not a failure.
     dry_run: bool = False
     # job id -> when an awake, free runner could first have taken it
-    served_since: Dict[int, datetime] = field(default_factory=dict)
+    served_since: dict[int, datetime] = field(default_factory=dict)
 
     def __post_init__(self):
         for m in self.machines:
@@ -118,7 +118,7 @@ class Controller:
 
     # --- helpers ---------------------------------------------------------------------
 
-    def _runners_of(self, machine: Machine, obs: Observation) -> List[Runner]:
+    def _runners_of(self, machine: Machine, obs: Observation) -> list[Runner]:
         return [r for r in obs.runners if machine.owns(r.name)]
 
     def _machine_of(self, runner_name: str) -> Optional[Machine]:
@@ -138,9 +138,7 @@ class Controller:
     def _waking(self, name: str, now: datetime) -> bool:
         s = self.state[name]
         return (
-            not self._usable(name, now)
-            and s.wake_sent is not None
-            and now - s.wake_sent < self.settings.wake_timeout
+            not self._usable(name, now) and s.wake_sent is not None and now - s.wake_sent < self.settings.wake_timeout
         )
 
     def _track_served(self, obs: Observation, now: datetime) -> None:
@@ -159,7 +157,7 @@ class Controller:
                     break
         self.served_since = {k: v for k, v in self.served_since.items() if k in present}
 
-    def _fresh(self, obs: Observation, now: datetime) -> List[QueuedJob]:
+    def _fresh(self, obs: Observation, now: datetime) -> list[QueuedJob]:
         """Jobs that GitHub may still hand out (see Settings.stale_queue)."""
         return [
             j
@@ -179,12 +177,12 @@ class Controller:
         s.sleep_failures += 1
         return s.sleep_failures >= 3
 
-    def _alert(self, s: MachineState, name: str, reason: str, now: datetime, actions: List[Action]) -> None:
+    def _alert(self, s: MachineState, name: str, reason: str, now: datetime, actions: list[Action]) -> None:
         if s.last_alert is None or now - s.last_alert >= self.settings.alert_quiet:
             s.last_alert = now
             actions.append(Action("alert", name, reason))
 
-    def _send_wake(self, m: Machine, reason: str, now: datetime, actions: List[Action]) -> None:
+    def _send_wake(self, m: Machine, reason: str, now: datetime, actions: list[Action]) -> None:
         s = self.state[m.name]
         s.wake_sent = now
         s.wake_attempts = 1
@@ -196,8 +194,8 @@ class Controller:
 
     # --- decision --------------------------------------------------------------------
 
-    def step(self, obs: Observation, now: datetime) -> List[Action]:
-        actions: List[Action] = []
+    def step(self, obs: Observation, now: datetime) -> list[Action]:
+        actions: list[Action] = []
         self._observe(obs, now, actions)
         self._track_served(obs, now)
         self._wake_for_queue(obs, now, actions)
@@ -206,7 +204,7 @@ class Controller:
             self._sleep_idle(obs, now, actions)
         return actions
 
-    def _observe(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
+    def _observe(self, obs: Observation, now: datetime, actions: list[Action]) -> None:
         for m in self.machines:
             s = self.state[m.name]
             runners = self._runners_of(m, obs)
@@ -235,11 +233,7 @@ class Controller:
                     s.wake_attempts = 0
             if any(r.busy for r in runners):
                 s.last_busy = now
-            if (
-                not awake
-                and s.wake_sent is not None
-                and now - s.wake_sent >= self.settings.wake_timeout
-            ):
+            if not awake and s.wake_sent is not None and now - s.wake_sent >= self.settings.wake_timeout:
                 if s.wake_attempts < self.settings.wake_attempts and not self.dry_run:
                     s.wake_sent = now
                     s.wake_attempts += 1
@@ -250,10 +244,12 @@ class Controller:
                     s.failed_until = now + self.settings.failed_backoff
                     s.weekly_pending = False
                     if not self.dry_run:
-                        self._alert(s, m.name, f"did not wake up after {self.settings.wake_attempts} attempts", now, actions)
+                        self._alert(
+                            s, m.name, f"did not wake up after {self.settings.wake_attempts} attempts", now, actions
+                        )
 
-    def _wake_for_queue(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
-        demand: Dict[Tuple[str, FrozenSet[str]], int] = {}
+    def _wake_for_queue(self, obs: Observation, now: datetime, actions: list[Action]) -> None:
+        demand: dict[tuple[str, frozenset[str]], int] = {}
         for job in self._fresh(obs, now):
             key = (job.source, job.labels)
             demand[key] = demand.get(key, 0) + 1
@@ -276,13 +272,9 @@ class Controller:
                 if self._waking(m.name, now):
                     coming += slots
                 elif (
-                    self._usable(m.name, now)
-                    and s.woke_at is not None
-                    and now - s.woke_at < self.settings.wake_timeout
+                    self._usable(m.name, now) and s.woke_at is not None and now - s.woke_at < self.settings.wake_timeout
                 ):
-                    coming += sum(
-                        1 for r in self._runners_of(m, obs) if not r.online and can_take(r, probe)
-                    )
+                    coming += sum(1 for r in self._runners_of(m, obs) if not r.online and can_take(r, probe))
                 elif not self._usable(m.name, now) and (s.failed_until is None or now >= s.failed_until):
                     candidates.append((m, slots))
             missing = demand[key] - have - coming
@@ -293,7 +285,7 @@ class Controller:
                 missing -= slots
                 self._send_wake(m, f"{demand[key]} queued job(s) with `{labels}`", now, actions)
 
-    def _weekly(self, now: datetime, actions: List[Action]) -> None:
+    def _weekly(self, now: datetime, actions: list[Action]) -> None:
         for m in self.machines:
             s = self.state[m.name]
             if s.awake or self._waking(m.name, now):
@@ -304,7 +296,7 @@ class Controller:
                 self._send_wake(m, "weekly: the runners must connect", now, actions)
                 s.weekly_pending = True
 
-    def _sleep_idle(self, obs: Observation, now: datetime, actions: List[Action]) -> None:
+    def _sleep_idle(self, obs: Observation, now: datetime, actions: list[Action]) -> None:
         fresh = self._fresh(obs, now)
         for m in self.machines:
             s = self.state[m.name]

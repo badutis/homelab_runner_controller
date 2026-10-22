@@ -2,7 +2,7 @@
 
 import socket
 import subprocess
-from typing import Callable, List
+from typing import Callable
 
 from .decide import Machine
 
@@ -32,25 +32,28 @@ SLEEP_EXIT = {
 }
 
 
-def ssh_sleep_command(machine: Machine, key_path: str, known_hosts: str) -> List[str]:
+def ssh_sleep_command(machine: Machine, key_path: str, known_hosts: str) -> list[str]:
     # The machine's authorized_keys restricts this key to one command (`command=`), so no
     # command is passed here: the machine decides what runs, not the controller.
     return [
         "ssh",
-        "-i", key_path,
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=5",
-        "-o", "StrictHostKeyChecking=yes",
-        "-o", f"UserKnownHostsFile={known_hosts}",
+        "-i",
+        key_path,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
         f"{machine.ssh_user}@{machine.host}",
     ]
 
 
 def put_to_sleep(machine: Machine, key_path: str, known_hosts: str, run: Callable = subprocess.run) -> str:
     try:
-        done = run(
-            ssh_sleep_command(machine, key_path, known_hosts), capture_output=True, text=True, timeout=30
-        )
+        done = run(ssh_sleep_command(machine, key_path, known_hosts), capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
         return "SSH did not answer within 30 s"
     if done.returncode == 255:

@@ -7,12 +7,11 @@ out the actions. While `dry_run` is `true` (the default), actions are only logge
 import json
 import logging
 import os
-import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List, Optional
+from typing import Optional
 
 from . import actions as act
 from .decide import Action, Controller, Machine, MachineState, Observation, Settings
@@ -32,7 +31,8 @@ def load_config(path: str) -> dict:
     if type(version) is not int or version not in SUPPORTED_CONFIG_VERSIONS:
         raise ValueError(
             f"{path}: config_version {version!r} is not supported by this WakeCI "
-            f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})")
+            f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})"
+        )
     cfg.setdefault("dry_run", True)
     cfg.setdefault("poll_seconds", 20)
     cfg.setdefault("idle_minutes", 30)
@@ -82,7 +82,7 @@ def notifications(cfg: dict, version: str) -> "tuple[Notifier, Optional[Sender]]
     return notifier, Sender(read_url(n["url_file"]), n["format"], f"wakeci/{version}")
 
 
-def sources_from(cfg: dict) -> List[Source]:
+def sources_from(cfg: dict) -> list[Source]:
     return [
         Source(runners_path=s["runners_path"], repos=tuple(s["repos"]), token=read_token(s["token_file"]))
         for s in cfg["sources"]
@@ -107,7 +107,7 @@ def _aware(value: object) -> Optional[datetime]:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
-def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
+def load_state(path: str) -> dict[str, dict[str, datetime]]:
     """A damaged or foreign file counts the same as no file."""
     try:
         with open(path, encoding="utf-8") as f:
@@ -116,7 +116,7 @@ def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
         return {}
     if not isinstance(raw, dict):
         return {}
-    out: Dict[str, Dict[str, datetime]] = {}
+    out: dict[str, dict[str, datetime]] = {}
     for name, fields in raw.items():
         if not isinstance(fields, dict):
             continue
@@ -125,8 +125,8 @@ def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
     return out
 
 
-def snapshot(state: Dict[str, MachineState]) -> Dict[str, Dict[str, str]]:
-    out: Dict[str, Dict[str, str]] = {}
+def snapshot(state: dict[str, MachineState]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
     for name, s in state.items():
         fields = {k: getattr(s, k).isoformat() for k in PERSISTED if getattr(s, k) is not None}
         if fields:
@@ -134,7 +134,7 @@ def snapshot(state: Dict[str, MachineState]) -> Dict[str, Dict[str, str]]:
     return out
 
 
-def save_state(path: str, data: Dict[str, Dict[str, str]]) -> None:
+def save_state(path: str, data: dict[str, dict[str, str]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -153,9 +153,9 @@ class Metrics:
     def update(
         self,
         ctl: Controller,
-        counters: Dict[str, int],
+        counters: dict[str, int],
         gh: "GitHub",
-        busy_seconds: Dict[str, float],
+        busy_seconds: dict[str, float],
         obs: Optional[Observation],
         dry_run: bool,
         notify_failed: int = 0,
@@ -180,7 +180,7 @@ class Metrics:
         for name, secs in sorted(busy_seconds.items()):
             lines.append(f'wakeci_runner_busy_seconds_total{{runner="{name}"}} {secs:.0f}')
         lines += ["# TYPE wakeci_queued_jobs gauge"]
-        queued: Dict[str, int] = {}
+        queued: dict[str, int] = {}
         for job in obs.queued if obs else ():
             key = ",".join(sorted(job.labels - {"self-hosted"}))
             queued[key] = queued.get(key, 0) + 1
@@ -189,7 +189,7 @@ class Metrics:
         # How long the oldest queued job has waited: the queue length is not enough for a
         # "waiting too long" alert, because a queue that keeps moving is not empty either.
         lines += ["# TYPE wakeci_queued_oldest_seconds gauge"]
-        oldest: Dict[str, float] = {}
+        oldest: dict[str, float] = {}
         now = datetime.now(timezone.utc)
         for job in obs.queued if obs else ():
             if job.since is None:
@@ -241,7 +241,7 @@ class Metrics:
 # --- ciklas ------------------------------------------------------------------------------
 
 
-def execute(a: Action, by_name: Dict[str, Machine], cfg: dict) -> str:
+def execute(a: Action, by_name: dict[str, Machine], cfg: dict) -> str:
     m = by_name[a.machine]
     if a.kind == "wake":
         act.wake(m, cfg["broadcast"])
@@ -267,8 +267,8 @@ def run(cfg: dict) -> None:
     gh = GitHub(sources_from(cfg))
     metrics = Metrics()
     metrics.serve(cfg["metrics_listen"])
-    counters: Dict[str, int] = {}
-    busy_seconds: Dict[str, float] = {}
+    counters: dict[str, int] = {}
+    busy_seconds: dict[str, float] = {}
     saved = snapshot(ctl.state)
     last_poll: Optional[datetime] = None
     obs: Optional[Observation] = None
@@ -294,9 +294,13 @@ def run(cfg: dict) -> None:
             notify(msg)
 
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
-    notify(notifier.event(
-        "start", f"wakeci {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
-        datetime.now(timezone.utc)))
+    notify(
+        notifier.event(
+            "start",
+            f"wakeci {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
+            datetime.now(timezone.utc),
+        )
+    )
 
     while True:
         now = datetime.now(timezone.utc)
@@ -305,10 +309,16 @@ def run(cfg: dict) -> None:
             pause = gh.backoff_until()
             if pause is not None and pause > now:
                 log.warning("GitHub limit nearly used up; waiting until %s", pause.isoformat())
-                notify(notifier.problem(
-                    "limit", f"wakeci: GitHub request limit nearly used up; not polling until "
-                    f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
-                    "meanwhile.", now, wait=False))
+                notify(
+                    notifier.problem(
+                        "limit",
+                        f"wakeci: GitHub request limit nearly used up; not polling until "
+                        f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
+                        "meanwhile.",
+                        now,
+                        wait=False,
+                    )
+                )
             else:
                 notify(notifier.clear("limit", "wakeci: GitHub request limit reset; polling again.", now))
                 obs = gh.observe()
@@ -316,11 +326,16 @@ def run(cfg: dict) -> None:
                     log.warning("source %s not read: %s", source, err)
                 for src in gh.sources:
                     key = f"source:{src.runners_path}"
-                    err = gh.errors.get(src.runners_path)
-                    if err is not None:
-                        notify(notifier.problem(
-                            key, f"wakeci: GitHub source {src.runners_path} cannot be read: {err}. "
-                            "No machine is suspended while this lasts (check its token).", now))
+                    error = gh.errors.get(src.runners_path)
+                    if error is not None:
+                        notify(
+                            notifier.problem(
+                                key,
+                                f"wakeci: GitHub source {src.runners_path} cannot be read: {error}. "
+                                "No machine is suspended while this lasts (check its token).",
+                                now,
+                            )
+                        )
                     else:
                         notify(notifier.clear(key, f"wakeci: GitHub source {src.runners_path} is readable again.", now))
                 if last_poll is not None:
@@ -346,9 +361,13 @@ def run(cfg: dict) -> None:
                         counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
                         if ctl.sleep_failed(a.machine, now):
                             log.error("alert %s: failed to suspend 3 times in a row — %s", a.machine, result)
-                            notify(notifier.event(
-                                f"sleep:{a.machine}",
-                                f"wakeci: {a.machine} failed to suspend 3 times in a row: {result}.", now))
+                            notify(
+                                notifier.event(
+                                    f"sleep:{a.machine}",
+                                    f"wakeci: {a.machine} failed to suspend 3 times in a row: {result}.",
+                                    now,
+                                )
+                            )
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)
@@ -362,15 +381,15 @@ def run(cfg: dict) -> None:
         time.sleep(cfg["poll_seconds"])
 
 
-def _days(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+def _days(data: dict[str, dict[str, str]]) -> dict[str, str]:
     return {k: v.get("last_online", "")[:10] for k, v in data.items()}
 
 
-def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+def _holds(data: dict[str, dict[str, str]]) -> dict[str, str]:
     return {k: v.get("hold_until", "") for k, v in data.items()}
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     """Kept for callers of the old entry point; the command line lives in cli.py."""
     from .cli import main as cli_main
 

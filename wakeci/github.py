@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from .decide import Observation, QueuedJob, Runner
 
@@ -34,7 +34,7 @@ class Source:
     """One place where runners are registered, and the repositories whose jobs use them."""
 
     runners_path: str  # e.g. "repos/example-org/app" or "orgs/example-org2"
-    repos: Tuple[str, ...]  # e.g. ("example-org/app",)
+    repos: tuple[str, ...]  # e.g. ("example-org/app",)
     token: str
 
 
@@ -48,18 +48,18 @@ def parse_time(value: Optional[str]) -> Optional[datetime]:
 
 
 class GitHub:
-    def __init__(self, sources: List[Source], opener=None, clock=None):
+    def __init__(self, sources: list[Source], opener=None, clock=None):
         self.sources = sources
         self._open = opener or urllib.request.urlopen
         self._now = clock or (lambda: datetime.now(timezone.utc))
-        self._cache: Dict[str, Tuple[str, object]] = {}
+        self._cache: dict[str, tuple[str, object]] = {}
         self._touched: set = set()
         # run's jobs URL -> (when it was read, the run's updated_at, queued jobs)
-        self._run_jobs: Dict[str, Tuple[datetime, str, List[QueuedJob]]] = {}
+        self._run_jobs: dict[str, tuple[datetime, str, list[QueuedJob]]] = {}
         self._kept: set = set()
-        self.remaining: Dict[str, int] = {}  # source -> remaining limit
-        self.reset_at: Dict[str, datetime] = {}
-        self.errors: Dict[str, str] = {}  # source -> last error
+        self.remaining: dict[str, int] = {}  # source -> remaining limit
+        self.reset_at: dict[str, datetime] = {}
+        self.errors: dict[str, str] = {}  # source -> last error
 
     # --- requests ----------------------------------------------------------------------
 
@@ -97,8 +97,8 @@ class GitHub:
                 return cached[1]
             raise
 
-    def _pages(self, path: str, key: str, src: Source) -> List[dict]:
-        out: List[dict] = []
+    def _pages(self, path: str, key: str, src: Source) -> list[dict]:
+        out: list[dict] = []
         page = 1
         while True:
             sep = "&" if "?" in path else "?"
@@ -115,16 +115,15 @@ class GitHub:
         """Until when to stop asking: some source's limit is nearly used up."""
         latest = None
         for source, rem in self.remaining.items():
-            if rem < STOP_REMAINING and source in self.reset_at:
-                if latest is None or self.reset_at[source] > latest:
-                    latest = self.reset_at[source]
+            if rem < STOP_REMAINING and source in self.reset_at and (latest is None or self.reset_at[source] > latest):
+                latest = self.reset_at[source]
         return latest
 
     def observe(self) -> Observation:
         self._touched = set()
         self._kept = set()
-        runners: List[Runner] = []
-        queued: List[QueuedJob] = []
+        runners: list[Runner] = []
+        queued: list[QueuedJob] = []
         complete = True
         for src in self.sources:
             try:
@@ -133,12 +132,12 @@ class GitHub:
                         name=r["name"],
                         online=r.get("status") == "online",
                         busy=bool(r.get("busy")),
-                        labels=frozenset(l["name"] for l in r.get("labels", [])),
+                        labels=frozenset(lab["name"] for lab in r.get("labels", [])),
                         source=src.runners_path,
                     )
                     for r in self._pages(f"{src.runners_path}/actions/runners", "runners", src)
                 ]
-                got_jobs: List[QueuedJob] = []
+                got_jobs: list[QueuedJob] = []
                 for repo in src.repos:
                     got_jobs.extend(self._queued_jobs(repo, src))
             except Exception as e:  # noqa: BLE001 — any error of one source stays with that source
@@ -152,14 +151,12 @@ class GitHub:
         # without bound. The ETag of a run taken from memory is kept: otherwise its next
         # re-read would go without If-None-Match and count against the limit unchanged.
         kept_urls = tuple(f"{API}/{p}?" for p in self._kept)
-        self._cache = {
-            k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)
-        }
+        self._cache = {k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)}
         self._run_jobs = {k: v for k, v in self._run_jobs.items() if k in self._kept}
         return Observation(runners=tuple(runners), queued=tuple(queued), complete=complete)
 
-    def _queued_jobs(self, repo: str, src: Source) -> List[QueuedJob]:
-        out: List[QueuedJob] = []
+    def _queued_jobs(self, repo: str, src: Source) -> list[QueuedJob]:
+        out: list[QueuedJob] = []
         now = self._now()
         low = self.remaining.get(src.runners_path, LOW_REMAINING) < LOW_REMAINING
         refresh = IN_PROGRESS_REFRESH_LOW if low else IN_PROGRESS_REFRESH
@@ -180,7 +177,7 @@ class GitHub:
                     continue
                 jobs = []
                 for job in self._pages(path, "jobs", src):
-                    labels = frozenset(l.lower() for l in job.get("labels", []))
+                    labels = frozenset(lab.lower() for lab in job.get("labels", []))
                     if job.get("status") == "queued" and "self-hosted" in labels:
                         jobs.append(
                             QueuedJob(

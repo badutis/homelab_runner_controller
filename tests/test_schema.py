@@ -16,9 +16,24 @@ TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
 
 
 SUPPORTED = {
-    "$schema", "$id", "$ref", "$defs", "title", "description", "default", "type", "enum",
-    "pattern", "minLength", "minimum", "exclusiveMinimum", "minItems", "items",
-    "properties", "required", "additionalProperties",
+    "$schema",
+    "$id",
+    "$ref",
+    "$defs",
+    "title",
+    "description",
+    "default",
+    "type",
+    "enum",
+    "pattern",
+    "minLength",
+    "minimum",
+    "exclusiveMinimum",
+    "minItems",
+    "items",
+    "properties",
+    "required",
+    "additionalProperties",
 }
 
 
@@ -125,6 +140,9 @@ class SchemaTest(unittest.TestCase):
             lambda c: c.update(config_version=True),
             lambda c: c["machines"][0].update(rank=1.5),
             lambda c: c.update(ssh_key="/etc/wakeci/id_ed25519\n"),
+            lambda c: c.update(state_file="/var/lib/wakeci/s.json\n"),
+            lambda c: c["machines"][0].update(name='host"1'),
+            lambda c: c["machines"][0].update(runner_prefixes=["a\n"]),
         ):
             cfg = copy.deepcopy(EXAMPLE)
             change(cfg)

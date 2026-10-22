@@ -36,7 +36,8 @@ import ipaddress
 import re
 import subprocess
 import sys
-from typing import Iterable, Iterator, List, Optional, Tuple
+from collections.abc import Iterable, Iterator
+from typing import Optional
 
 # This file is scanned like any other, so nothing in it may look like a finding: the
 # networks are numbers, not dotted text, and the tool names are built from pieces
@@ -54,23 +55,29 @@ EARLIER_VERSIONS_OF_THIS_FILE = frozenset(
     }
 )
 
-PRIVATE_NETS = [
+PRIVATE_NETS_V4 = [
     ipaddress.IPv4Network((0x0A000000, 8)),
     ipaddress.IPv4Network((0xAC100000, 12)),
     ipaddress.IPv4Network((0xC0A80000, 16)),
     ipaddress.IPv4Network((0x64400000, 10)),  # carrier-grade NAT
     ipaddress.IPv4Network((0xA9FE0000, 16)),  # link-local
+]
+PRIVATE_NETS_V6 = [
     ipaddress.IPv6Network((0xFC << 120, 7)),  # unique-local
     ipaddress.IPv6Network((0xFE80 << 112, 10)),  # link-local
 ]
 # A trailing dot ends a sentence and is allowed; a dot followed by a digit is not.
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d)(?!\.\d)")
-IPV6 = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]:)(?<!::)((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I)
+IPV6 = re.compile(
+    r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]:)(?<!::)((?:f[c-e][0-9a-f]{0,2}):[0-9a-f:]*[0-9a-f])(?![0-9a-f:])", re.I
+)
 # A run of six or more hex pairs: the text right before a MAC may itself look like a
 # pair ("mac:fc:..."), so the run is reported unless some six-pair window of it is allowed.
 # Not after a 3–4 digit group and a colon: that is the tail of an IPv6 address.
 MAC_RUN = re.compile(r"(?<![0-9A-Fa-f])(?<![0-9A-Fa-f]{3}:)((?:[0-9A-Fa-f]{2}[:-]){5,}[0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
-MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f])(?!\.[0-9A-Fa-f])")
+MAC_DOTTED = re.compile(
+    r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})(?![0-9A-Fa-f])(?!\.[0-9A-Fa-f])"
+)
 MAC_ALLOWED = re.compile(r"^(00005e0053[0-9a-f]{2}|f{12}|0{11}[0-9a-f])$")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_ALLOWED = re.compile(r"(@users\.noreply\.github\.com|^noreply@github\.com|@example\.(com|org|net))$", re.I)
@@ -95,14 +102,14 @@ def _mac_allowed(run: str) -> bool:
 def findings_in_text(text: str) -> Iterator[str]:
     for m in IPV4.finditer(text):
         ip = _ipv4(m.group(1))
-        if ip is not None and any(ip in net for net in PRIVATE_NETS):
+        if ip is not None and any(ip in net for net in PRIVATE_NETS_V4):
             yield f"private address {ip}"
     for m in IPV6.finditer(text):
         try:
             ip6 = ipaddress.IPv6Address(m.group(1))
         except ValueError:
             continue
-        if any(ip6 in net for net in PRIVATE_NETS):
+        if any(ip6 in net for net in PRIVATE_NETS_V6):
             yield f"private address {ip6}"
     for m in MAC_RUN.finditer(text):
         if not _mac_allowed(m.group(1)):
@@ -117,7 +124,7 @@ def findings_in_text(text: str) -> Iterator[str]:
         yield f"AI attribution '{m.group(0)}'"
 
 
-def scan_lines(where: str, text: str) -> List[str]:
+def scan_lines(where: str, text: str) -> list[str]:
     out = []
     for n, line in enumerate(text.splitlines(), 1):
         out += [f"{where}:{n}: {f}" for f in findings_in_text(line)]
@@ -135,7 +142,7 @@ def decode(raw: bytes) -> Optional[str]:
     return raw.decode("utf-8", errors="replace")
 
 
-def index_files() -> Iterable[Tuple[str, str]]:
+def index_files() -> Iterable[tuple[str, str]]:
     # The committed content, not the working tree: a symlink is read as its target path,
     # a submodule (mode 160000) is skipped, a file deleted from disk does not crash.
     for entry in git("ls-files", "-s", "-z").decode(errors="replace").split("\0"):
@@ -150,13 +157,15 @@ def index_files() -> Iterable[Tuple[str, str]]:
             yield path, text
 
 
-def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
+def read_objects(shas: list[str]) -> Iterator[tuple[str, str, bytes]]:
     """(sha, type, content) for many objects in one ``git cat-file --batch`` call."""
     if not shas:
         return
     out = subprocess.run(
-        ["git", "cat-file", "--batch"], input="\n".join(shas).encode() + b"\n",
-        check=True, capture_output=True,
+        ["git", "cat-file", "--batch"],
+        input="\n".join(shas).encode() + b"\n",
+        check=True,
+        capture_output=True,
     ).stdout
     pos = 0
     while pos < len(out):
@@ -170,11 +179,11 @@ def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
         pos += size + 1  # the content is followed by a newline
 
 
-def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
+def history(revs: list[str]) -> Iterable[tuple[str, str]]:
     """Every blob and every commit reachable from ``revs`` (commits read raw: author and
     committer names and emails, and the message, whatever characters it holds). A blob
     with no path is one a tag points at directly; it is scanned too."""
-    paths = {}
+    paths: dict[str, str] = {}
     for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         paths.setdefault(sha, path)
@@ -188,7 +197,7 @@ def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
             yield f"commit {sha[:7]}", raw.decode(errors="replace")
 
 
-def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[Tuple[str, str]]:
+def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[tuple[str, str]]:
     """Every tag object from ``sha`` down to what it finally points at (tags can be nested).
     The raw object holds the tag name, the tagger and the message. Objects in ``seen`` are
     not read again. With ``limit``, a longer chain is an error rather than a silent stop."""
@@ -209,12 +218,12 @@ def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[Tupl
         sha = target.group(1)
 
 
-def tag_refs() -> List[Tuple[str, str]]:
+def tag_refs() -> list[tuple[str, str]]:
     out = git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace")
-    return [tuple(line.split(" ", 1)) for line in out.splitlines() if " " in line]
+    return [(sha, name) for sha, _, name in (line.partition(" ") for line in out.splitlines()) if name]
 
 
-def tags(refs: List[Tuple[str, str]]) -> Iterable[Tuple[str, str]]:
+def tags(refs: list[tuple[str, str]]) -> Iterable[tuple[str, str]]:
     """The tag objects of every local tag, nested ones included, each read once."""
     seen: set = set()
     for sha, name in refs:
@@ -235,7 +244,7 @@ def main(argv=None) -> int:
         ap.error("--rev needs --history")
     if args.rev and not re.match(r"^[0-9a-f]{7,64}$", args.rev):
         ap.error("--rev must be a commit id")
-    found: List[str] = []
+    found: list[str] = []
     try:
         if not args.rev:
             for where, text in index_files():

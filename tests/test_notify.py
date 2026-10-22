@@ -156,7 +156,9 @@ class PayloadTest(unittest.TestCase):
         m = Message("source:orgs/o", "text", resolved=True)
         self.assertEqual(payload("discord", m), {"content": "text", "allowed_mentions": {"parse": []}})
         self.assertEqual(payload("slack", m), {"text": "text"})
-        self.assertEqual(payload("json", m), {"event": "source", "key": "source:orgs/o", "text": "text", "resolved": True})
+        self.assertEqual(
+            payload("json", m), {"event": "source", "key": "source:orgs/o", "text": "text", "resolved": True}
+        )
 
     def test_discord_text_is_cut_to_its_limit(self):
         self.assertEqual(len(payload("discord", Message("k", "x" * 5000))["content"]), 2000)
@@ -178,8 +180,13 @@ class ReadUrlTest(unittest.TestCase):
     def test_plain_http_only_to_this_machine(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "u")
-            for url, ok in (("http://example.com/hook", False), ("http://127.0.0.1:9199/hook", True),
-                            ("http://localhost/hook", True), ("ftp://example.com/x", False), ("https://", False)):
+            for url, ok in (
+                ("http://example.com/hook", False),
+                ("http://127.0.0.1:9199/hook", True),
+                ("http://localhost/hook", True),
+                ("ftp://example.com/x", False),
+                ("https://", False),
+            ):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(url)
                 if ok:
@@ -303,7 +310,8 @@ class WiringTest(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("https://example.com/hook\n")
             notifier, sender = main.notifications(
-                {"notify": {"url_file": path, "format": "slack", "after_minutes": 3, "repeat_hours": 2}}, "v")
+                {"notify": {"url_file": path, "format": "slack", "after_minutes": 3, "repeat_hours": 2}}, "v"
+            )
             self.addCleanup(sender.close)
         self.assertEqual((notifier.after, notifier.repeat), (3 * MIN, timedelta(hours=2)))
 

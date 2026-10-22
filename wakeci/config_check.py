@@ -27,15 +27,25 @@ import json
 import os
 import re
 import sys
-from typing import List, Tuple
 
 from . import actions, main
 from .notify import FORMATS
 
 CONFIG_VERSION = 1
 TOP_KEYS = {
-    "$schema", "config_version", "dry_run", "poll_seconds", "idle_minutes", "broadcast",
-    "metrics_listen", "state_file", "ssh_key", "known_hosts", "notify", "sources", "machines",
+    "$schema",
+    "config_version",
+    "dry_run",
+    "poll_seconds",
+    "idle_minutes",
+    "broadcast",
+    "metrics_listen",
+    "state_file",
+    "ssh_key",
+    "known_hosts",
+    "notify",
+    "sources",
+    "machines",
 }
 SOURCE_KEYS = {"runners_path", "repos", "token_file"}
 MACHINE_KEYS = {"name", "mac", "host", "ssh_user", "runner_prefixes", "rank"}
@@ -43,6 +53,8 @@ NOTIFY_KEYS = {"url_file", "format", "after_minutes", "repeat_hours"}
 
 ETC = "/etc/wakeci"
 FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+MACHINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # it is a label value in /metrics
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 HOST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 RUNNERS_PATH = re.compile(r"^(repos/[^/\s]+/[^/\s]+|orgs/[^/\s]+)$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -68,14 +80,14 @@ def no_unknown_keys(where: str, obj, allowed: set) -> None:
         raise ValueError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
 
 
-def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str]]:
+def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str]]:
     """The paths to prepare, or ValueError. Notes that are not errors go to ``warnings``."""
     warnings = [] if warnings is None else warnings
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     no_unknown_keys("the configuration", raw, TOP_KEYS)
     if "config_version" not in raw:
-        warnings.append(f"no config_version: read as version {CONFIG_VERSION}; add \"config_version\": {CONFIG_VERSION}")
+        warnings.append(f'no config_version: read as version {CONFIG_VERSION}; add "config_version": {CONFIG_VERSION}')
     cfg = main.load_config(path)
     out = []
     if not isinstance(cfg["dry_run"], bool):
@@ -85,12 +97,16 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     try:
         ipaddress.IPv4Address(cfg["broadcast"])
     except (ValueError, TypeError):
-        raise ValueError("broadcast must be an IPv4 address")
+        raise ValueError("broadcast must be an IPv4 address") from None
     listen = cfg["metrics_listen"]
     host, _, port = listen.rpartition(":") if isinstance(listen, str) else ("", "", "")
     if not host or not port.isdigit() or not 0 < int(port) < 65536:
         raise ValueError("metrics_listen must be <address>:<port>")
-    if not isinstance(cfg["state_file"], str) or not os.path.isabs(cfg["state_file"]):
+    if (
+        not isinstance(cfg["state_file"], str)
+        or not os.path.isabs(cfg["state_file"])
+        or CONTROL.search(cfg["state_file"])
+    ):
         raise ValueError("state_file must be an absolute path")
     used = {
         "ssh_key": in_etc("ssh_key", cfg.get("ssh_key")),
@@ -118,7 +134,10 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
             raise ValueError(f"{where}.repos must be a non-empty list of <owner>/<repo>")
         token = in_etc(f"{where}.token_file", s.get("token_file"))
         # Several sources may share one token file; it must only not be another kind of file.
-        if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in ("config.json", os.path.basename(used["ssh_key"]) + ".pub"):
+        if token in (used["ssh_key"], used["known_hosts"]) or os.path.basename(token) in (
+            "config.json",
+            os.path.basename(used["ssh_key"]) + ".pub",
+        ):
             raise ValueError(f"{where}.token_file must not reuse another file's name")
         out.append(("token", token))
 
@@ -150,11 +169,16 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     if not machines:
         raise ValueError("machines must not be empty")
     names = [m.name for m in machines]
+    for name in names:
+        if not isinstance(name, str) or not MACHINE_NAME.fullmatch(name):
+            raise ValueError(f"machine name {name!r}: letters, digits, '.', '_' and '-' only")
     if len(set(names)) != len(names):
         raise ValueError("machine names must be unique")
     for m in machines:
         actions.magic_packet(m.mac)  # raises on a malformed MAC
-        if not m.runner_prefixes or not all(isinstance(p, str) and p for p in m.runner_prefixes):
+        if not m.runner_prefixes or not all(
+            isinstance(p, str) and p and not CONTROL.search(p) for p in m.runner_prefixes
+        ):
             raise ValueError(f"machine {m.name}: runner_prefixes must be non-empty strings")
         if not isinstance(m.host, str) or "%" in m.host:
             raise ValueError(f"machine {m.name}: host must be an address or a host name")
@@ -163,7 +187,7 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
         except ValueError:
             # Not starting with "-": the host is passed to ssh-keyscan and ssh.
             if not HOST_NAME.fullmatch(m.host):
-                raise ValueError(f"machine {m.name}: host must be an address or a host name")
+                raise ValueError(f"machine {m.name}: host must be an address or a host name") from None
         rank = next((x.get("rank", 1) for x in cfg["machines"] if x.get("name") == m.name), 1)
         if isinstance(rank, bool) or not isinstance(rank, int):
             raise ValueError(f"machine {m.name}: rank must be a whole number")
@@ -173,12 +197,12 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     return out
 
 
-def paths_main(argv: List[str]) -> int:
+def paths_main(argv: list[str]) -> int:
     """``controller/check_config.py CONFIG``: the path list for the installer."""
     if len(argv) != 1:
         print("usage: check_config.py CONFIG.json", file=sys.stderr)
         return 2
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         lines = check(argv[0], warnings)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:

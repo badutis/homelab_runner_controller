@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from wakeci.decide import Controller, Machine, Observation, QueuedJob, Runner, Settings
+from wakeci.decide import Controller, Machine, Observation, QueuedJob, Runner
 
 T0 = datetime(2026, 10, 17, 12, 0, 0)
 MIN = timedelta(minutes=1)
@@ -27,8 +27,7 @@ def machine(n, rank=1):
 
 def runners(n, labels, count, online, busy=0):
     return [
-        Runner(name=f"host{n}-a-{i + 1}", online=online, busy=online and i < busy, labels=labels)
-        for i in range(count)
+        Runner(name=f"host{n}-a-{i + 1}", online=online, busy=online and i < busy, labels=labels) for i in range(count)
     ]
 
 
@@ -268,7 +267,9 @@ class ReviewFindingsTest(unittest.TestCase):
         jobs = [Q_SMALL, Q_SMALL]
         asleep = runners(1, SMALL, 2, False) + runners(4, SMALL, 2, False)
         self.assertEqual(kinds(ctl.step(obs(asleep, jobs), T0)), [("wake", "host1")])
-        half = [Runner("host1-a-1", True, False, SMALL), Runner("host1-a-2", False, False, SMALL)] + runners(4, SMALL, 2, False)
+        half = [Runner("host1-a-1", True, False, SMALL), Runner("host1-a-2", False, False, SMALL)] + runners(
+            4, SMALL, 2, False
+        )
         self.assertEqual(ctl.step(obs(half, jobs), T0 + MIN), [])
 
     def test_failed_sleep_makes_the_machine_usable_and_alerts_on_the_third(self):

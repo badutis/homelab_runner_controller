@@ -22,8 +22,13 @@ def found(text):
 
 class AddressTest(unittest.TestCase):
     def test_private_addresses_are_refused(self):
-        for parts in (["10", "1", "2", "3"], ["172", "20", "0", "5"], ["192", "168", "1", "10"],
-                      ["100", "64", "3", "4"], ["169", "254", "0", "1"]):
+        for parts in (
+            ["10", "1", "2", "3"],
+            ["172", "20", "0", "5"],
+            ["192", "168", "1", "10"],
+            ["100", "64", "3", "4"],
+            ["169", "254", "0", "1"],
+        ):
             ip = DOT.join(parts)
             self.assertEqual(found(f"host: {ip}"), [f"private address {ip}"], ip)
 
@@ -44,8 +49,16 @@ class AddressTest(unittest.TestCase):
         self.assertEqual(found(f"addr:{ula}"), [f"private address {ula}"])
 
     def test_documentation_public_and_special_addresses_pass(self):
-        for ip in ("192.0.2.11", "198.51.100.7", "203.0.113.9", "0.0.0.0:9105", "127.0.0.1",
-                   "255.255.255.255", "version 1.2.3", "a 999.1.1.1 b"):
+        for ip in (
+            "192.0.2.11",
+            "198.51.100.7",
+            "203.0.113.9",
+            "0.0.0.0:9105",
+            "127.0.0.1",
+            "255.255.255.255",
+            "version 1.2.3",
+            "a 999.1.1.1 b",
+        ):
             self.assertEqual(found(ip), [], ip)
 
 
@@ -53,13 +66,26 @@ class MacTest(unittest.TestCase):
     def test_real_looking_mac_is_refused_in_every_notation(self):
         dashed = MAC.replace(":", "-").upper()
         dotted = "fc3f" + DOT + "db12" + DOT + "3456"
-        for text in (f"mac {MAC}", f"mac {dashed}", f"mac{COLON}{MAC}", f"a-{MAC}", f"hwaddr {MAC}:", dotted,
-                     f"switch shows {dotted}."):
+        for text in (
+            f"mac {MAC}",
+            f"mac {dashed}",
+            f"mac{COLON}{MAC}",
+            f"a-{MAC}",
+            f"hwaddr {MAC}:",
+            dotted,
+            f"switch shows {dotted}.",
+        ):
             self.assertEqual(len(found(text)), 1, text)
 
     def test_documentation_and_placeholder_macs_pass(self):
-        for mac in ("00:00:5e:00:53:01", "00:00:5E:00:53:ff", "mac:00:00:5e:00:53:02",
-                    "ff:ff:ff:ff:ff:ff", "00:00:00:00:00:03", "0000.5e00.5301"):
+        for mac in (
+            "00:00:5e:00:53:01",
+            "00:00:5E:00:53:ff",
+            "mac:00:00:5e:00:53:02",
+            "ff:ff:ff:ff:ff:ff",
+            "00:00:00:00:00:03",
+            "0000.5e00.5301",
+        ):
             self.assertEqual(found(mac), [], mac)
 
 
@@ -70,8 +96,13 @@ class EmailAndToolTest(unittest.TestCase):
             self.assertEqual(found(ok), [], ok)
 
     def test_ai_attribution_is_refused_in_any_spelling(self):
-        for text in (f"Co-Authored-By: {TOOL} <x@example.com>", f"{TOOL.lower()}_code", f"{TOOL}Code",
-                     "Generated with Chat" + "GPT", "written by Co" + "pilot"):
+        for text in (
+            f"Co-Authored-By: {TOOL} <x@example.com>",
+            f"{TOOL.lower()}_code",
+            f"{TOOL}Code",
+            "Generated with Chat" + "GPT",
+            "written by Co" + "pilot",
+        ):
             self.assertTrue(found(text), text)
 
     def test_ordinary_words_pass(self):
@@ -81,21 +112,34 @@ class EmailAndToolTest(unittest.TestCase):
 class RepositoryTest(unittest.TestCase):
     """The whole script against a throw-away repository."""
 
-    def run_in_repo(self, files, message="add file", history=True, author="t", tag_message=None,
-                    raw=False, after=None):
+    def run_in_repo(self, files, message="add file", history=True, author="t", tag_message=None, raw=False, after=None):
         old = os.getcwd()
         with tempfile.TemporaryDirectory() as d:
-            env = dict(os.environ, GIT_AUTHOR_NAME=author, GIT_COMMITTER_NAME="t",
-                       GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_EMAIL="t@example.com",
-                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", HOME=d)
+            env = dict(
+                os.environ,
+                GIT_AUTHOR_NAME=author,
+                GIT_COMMITTER_NAME="t",
+                GIT_AUTHOR_EMAIL="t@example.com",
+                GIT_COMMITTER_EMAIL="t@example.com",
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_NOSYSTEM="1",
+                HOME=d,
+            )
 
             def git(*a):
-                subprocess.run(["git", "-c", "tag.gpgSign=false", "-c", "commit.gpgSign=false", *a],
-                               cwd=d, check=True, capture_output=True, env=env)
+                subprocess.run(
+                    ["git", "-c", "tag.gpgSign=false", "-c", "commit.gpgSign=false", *a],
+                    cwd=d,
+                    check=True,
+                    capture_output=True,
+                    env=env,
+                )
 
             git("init", "-q")
             for content in files:
-                with open(os.path.join(d, "a.txt"), "wb" if raw else "w", **({} if raw else {"encoding": "utf-8"})) as f:
+                with open(
+                    os.path.join(d, "a.txt"), "wb" if raw else "w", **({} if raw else {"encoding": "utf-8"})
+                ) as f:
                     f.write(content)
                 git("add", "a.txt")
                 git("commit", "-q", "-m", message)
@@ -135,13 +179,22 @@ class RepositoryTest(unittest.TestCase):
 
     def test_a_tag_pointing_straight_at_a_blob_is_scanned(self):
         def after(d, git):
-            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=d, capture_output=True,
-                                  input=f"host {PRIV}\n".encode(), check=True).stdout.decode().strip()
+            blob = (
+                subprocess.run(
+                    ["git", "hash-object", "-w", "--stdin"],
+                    cwd=d,
+                    capture_output=True,
+                    input=f"host {PRIV}\n".encode(),
+                    check=True,
+                )
+                .stdout.decode()
+                .strip()
+            )
             git("tag", "blobtag", blob)
 
         code, out = self.run_in_repo(["x\n"], after=after)
         self.assertEqual(code, 1)
-        self.assertIn(f"(blob)", out)
+        self.assertIn("(blob)", out)
 
     def test_annotated_tag_message_is_scanned(self):
         code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
@@ -161,7 +214,6 @@ class RepositoryTest(unittest.TestCase):
             os.remove(os.path.join(d, "a.txt"))
 
         self.assertEqual(self.run_in_repo(["x\n"], after=after), (0, ""))
-
 
     def leak_also_at_the_guard_path(self, d, git, tag_only):
         """The same leaking content at b.txt in an older commit and later at the guard's
@@ -197,7 +249,8 @@ class RepositoryTest(unittest.TestCase):
     def test_content_at_the_guard_path_and_elsewhere_is_found(self):
         for tag_only in (False, True):
             code, out = self.run_in_repo(
-                ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only))
+                ["x\n"], after=lambda d, git, tag_only=tag_only: self.leak_also_at_the_guard_path(d, git, tag_only)
+            )
             self.assertEqual(code, 1, tag_only)
             self.assertIn(f"private address {PRIV}", out, tag_only)
 

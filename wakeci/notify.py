@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, Deque, Dict, List, Optional
+from typing import Callable, Optional
 
 log = logging.getLogger("wakeci")
 
@@ -55,8 +55,8 @@ class _Problem:
 class Notifier:
     after: timedelta = timedelta(minutes=10)
     repeat: timedelta = timedelta(hours=6)
-    problems: Dict[str, _Problem] = field(default_factory=dict)
-    events: Dict[str, datetime] = field(default_factory=dict)
+    problems: dict[str, _Problem] = field(default_factory=dict)
+    events: dict[str, datetime] = field(default_factory=dict)
 
     def problem(self, key: str, text: str, now: datetime, wait: bool = True) -> Optional[Message]:
         """The problem ``key`` is present at ``now``. ``wait=False`` reports it at once."""
@@ -110,11 +110,11 @@ class Outbox:
 
     delay: timedelta = RETRY_AFTER
     give_up: timedelta = GIVE_UP_AFTER
-    latest: Dict[str, int] = field(default_factory=dict)  # key -> sequence number last queued
+    latest: dict[str, int] = field(default_factory=dict)  # key -> sequence number last queued
     # key -> (original message, next try, first failure)
-    pending: Dict[str, "tuple[Message, datetime, datetime]"] = field(default_factory=dict)
+    pending: dict[str, "tuple[Message, datetime, datetime]"] = field(default_factory=dict)
     # key -> (original message, first failure, the retry copy that was handed out)
-    retrying: Dict[str, "tuple[Message, datetime, Message]"] = field(default_factory=dict)
+    retrying: dict[str, "tuple[Message, datetime, Message]"] = field(default_factory=dict)
 
     def queued(self, msg: Message, seq: int) -> None:
         self.latest[msg.key] = seq
@@ -135,7 +135,7 @@ class Outbox:
         self.pending[msg.key] = (msg, now + self.delay, now)
         return True
 
-    def due(self, now: datetime, notifier: Notifier) -> List[Message]:
+    def due(self, now: datetime, notifier: Notifier) -> list[Message]:
         out = []
         for key, (msg, at, first) in list(self.pending.items()):
             if at > now:
@@ -151,8 +151,12 @@ class Outbox:
             if msg.resolved and key in notifier.problems:
                 self.pending[key] = (msg, now + self.delay, first)  # a short flap: wait it out
                 continue
-            copy = Message(key, f"{msg.text} (delayed: first failed {first:%Y-%m-%d %H:%M} UTC)",
-                           resolved=msg.resolved, problem=msg.problem)
+            copy = Message(
+                key,
+                f"{msg.text} (delayed: first failed {first:%Y-%m-%d %H:%M} UTC)",
+                resolved=msg.resolved,
+                problem=msg.problem,
+            )
             self.retrying[key] = (msg, first, copy)
             out.append(copy)
         return out
@@ -191,8 +195,15 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class Sender:
-    def __init__(self, url: str, fmt: str, user_agent: str, opener: Callable = _OPENER.open,
-                 timeout: float = 10.0, size: int = 100):
+    def __init__(
+        self,
+        url: str,
+        fmt: str,
+        user_agent: str,
+        opener: Callable = _OPENER.open,
+        timeout: float = 10.0,
+        size: int = 100,
+    ):
         if fmt not in FORMATS:
             raise ValueError(f"unknown notify format {fmt!r}")
         self._url = url
@@ -200,10 +211,10 @@ class Sender:
         self._ua = user_agent
         self._open = opener
         self._timeout = timeout
-        self._queue: "queue.Queue[Optional[tuple[int, Message]]]" = queue.Queue(maxsize=size)
+        self._queue: queue.Queue[Optional[tuple[int, Message]]] = queue.Queue(maxsize=size)
         self.failed = 0
         # (sequence number, message) of posts that were not delivered; the loop takes them.
-        self._undelivered: Deque["tuple[int, Message]"] = collections.deque()
+        self._undelivered: collections.deque[tuple[int, Message]] = collections.deque()
         self._seq = 0
         self._thread = threading.Thread(target=self._run, name="wakeci-notify", daemon=True)
         self._thread.start()
@@ -219,7 +230,7 @@ class Sender:
             self._fail(seq, msg, "queue full")
         return seq
 
-    def take_undelivered(self) -> List["tuple[int, Message]"]:
+    def take_undelivered(self) -> list["tuple[int, Message]"]:
         out = []
         while self._undelivered:
             out.append(self._undelivered.popleft())
