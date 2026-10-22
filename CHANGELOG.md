@@ -28,8 +28,9 @@ The first release under the WakeCI name.
 - Project files: SECURITY.md (private vulnerability reporting), CONTRIBUTING.md, the
   Contributor Covenant code of conduct, issue and pull request templates.
 - Every pull request commit must be signed off (DCO), checked in CI.
-- Dependabot keeps the pinned CI actions and dev tools current (releases at least 14 days
-  old); CodeQL and secret scanning are on.
+- Dependabot keeps the pinned CI actions and dev tools current (version updates wait until
+  a release is 14 days old; security updates come at once); CodeQL and secret scanning are
+  on.
 
 ## [0.3.0] - 2026-10-22
 

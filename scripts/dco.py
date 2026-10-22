@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 
-SIGNED = re.compile(r"^Signed-off-by: .+ <([^<>\s]+)>\s*$", re.M)
+SIGNED = re.compile(r"^(?i:signed-off-by): .+ <([^<>\s]+)>\s*$", re.M)
 EXEMPT = {"49699333+dependabot[bot]@users.noreply.github.com"}
 
 

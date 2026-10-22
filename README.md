@@ -25,7 +25,7 @@ flowchart LR
   runners.
 - **Safe by design.** Read-only GitHub tokens. The SSH key can run one command, which
   suspends a machine only if no job is running on it. It needs no inbound connection, no
-  webhook, and no token that can change anything.
+  incoming GitHub webhook, and no token that can change anything.
 - **Nothing to install but Python.** Standard library only (3.9+), no Docker, no database.
   The only state on disk is a small file, written a few times a day.
 - **Observable.** Prometheus `/metrics`, and webhook notifications to Discord, Slack or any
@@ -45,7 +45,7 @@ flowchart LR
 | | Supported |
 |---|---|
 | Controller host | Linux with systemd; x86_64 and arm64 tested in CI, 32-bit ARM on real boards |
-| Python | 3.9 to 3.13 on the controller (3.10+ for the dev tools) |
+| Python | 3.9 to 3.13 on the controller (3.11+ for the dev tools) |
 | Runner machines | Ubuntu or Debian with systemd, Wake-on-LAN and suspend-to-RAM |
 | GitHub | github.com, repository and organisation runners |
 
@@ -325,7 +325,7 @@ python3 scripts/public_safe.py --history
 ```
 
 Lint, formatting, types and coverage use pinned tools (installed by hash, never a newer
-release by surprise). They need Python 3.10 or newer (CI uses 3.13), in a virtual
+release by surprise). They need Python 3.11 or newer (CI uses 3.13), in a virtual
 environment:
 
 ```bash

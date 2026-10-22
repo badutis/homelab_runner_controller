@@ -28,7 +28,7 @@ the repository.
 ```bash
 git clone https://github.com/badutis/wakeci && cd wakeci
 scripts/install-hooks.sh            # the pre-push guard
-python3 -m venv .venv && . .venv/bin/activate   # Python 3.10+ for the dev tools
+python3 -m venv .venv && . .venv/bin/activate   # Python 3.11+ for the dev tools
 python3 -m pip install --require-hashes --no-deps -r requirements-dev.txt
 ```
 

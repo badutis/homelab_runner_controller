@@ -59,6 +59,10 @@ class DcoTest(unittest.TestCase):
         )
         self.assertEqual(dco.unsigned(self.base, head), [])
 
+    def test_the_trailer_key_is_case_insensitive(self):
+        head = self.commit("feat: x\n\nSigned-Off-By: Ann <ann@example.com>", sign=False)
+        self.assertEqual(dco.unsigned(self.base, head), [])
+
     def test_dependabot_commits_are_exempt(self):
         bot = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>"
         head = self.commit("build: bump", sign=False, author=bot)

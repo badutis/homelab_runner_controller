@@ -1,6 +1,7 @@
 # Weekly update PRs for the pinned CI actions and the hashed dev and release tools.
-# WakeCI itself has no dependencies. A release must be 14 days old before it is proposed,
-# so a broken or hijacked release has time to be noticed first.
+# WakeCI itself has no dependencies. A version update waits until the release is 14 days
+# old, so a broken or hijacked release has time to be noticed first. Security updates
+# (Dependabot security updates, on for this repository) are not delayed.
 version: 2
 updates:
   - package-ecosystem: github-actions
