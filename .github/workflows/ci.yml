@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh
+      - run: shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
 
   # Installs the controller from scratch on a clean Ubuntu with systemd, as the board
   # would get it from orangepi/deploy.sh, and starts it with fake tokens.

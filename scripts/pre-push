@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Git pre-push hook, installed by scripts/install-hooks.sh. Runs scripts/public_safe.py over
+# the history of every commit about to be pushed and refuses the push if it finds anything,
+# so installation data never reaches the public repository. CI runs the same check, but only
+# after the push, when it is already public.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+guard="$root/scripts/public_safe.py"
+if [ ! -f "$guard" ]; then
+  echo "pre-push: $guard not found; push refused (check out a branch that has it)" >&2
+  exit 1
+fi
+
+failed=0
+# git passes one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  [[ "$local_sha" =~ ^0+$ ]] && continue  # deleting a remote ref: nothing to check
+  if ! (cd "$root" && python3 "$guard" --history --rev "$local_sha" >&2); then
+    echo "pre-push: $local_ref ($local_sha) holds the findings above; push refused" >&2
+    failed=1
+  fi
+done
+exit "$failed"

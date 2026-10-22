@@ -32,7 +32,8 @@ How the decisions are made, the security model and the known limits are describe
 | `orangepi/` (other files) | controller | example configuration and the `systemd` unit |
 | `machine/rack-sleep` | runner machine | suspends the machine unless a job is running |
 | `machine/install.sh` | runner machine | installs `rack-sleep`, the `sudoers` rule, the restricted key and Wake-on-LAN |
-| `scripts/public_safe.py` | CI | refuses private addresses, MAC addresses, personal emails and AI attribution |
+| `scripts/public_safe.py` | CI, pre-push | refuses private addresses, MAC addresses, personal emails and AI attribution |
+| `scripts/pre-push`, `scripts/install-hooks.sh` | your computer | runs that check before every push |
 
 ## Requirements
 
@@ -183,7 +184,7 @@ them breaks without any error when a name changes.
 
 ```bash
 python3 -m unittest discover -s tests -t .
-shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh
+shellcheck machine/install.sh machine/rack-sleep orangepi/install.sh orangepi/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
 python3 scripts/public_safe.py --history
 ```
 
@@ -203,6 +204,17 @@ addresses, MAC addresses, personal emails and AI attribution. It checks the whol
 of the branch and every tag's message and tagger, not only the latest commit. It cannot recognise public
 addresses or the names of real machines, users and repositories. Keeping those out is
 up to the author.
+
+CI runs that check only after a push, when the commit is already public. Install the
+pre-push hook once per clone, so that a push holding a finding is refused on your own
+computer instead:
+
+```bash
+scripts/install-hooks.sh
+```
+
+It checks the whole history of every commit you push, on any branch, and lets ref
+deletions through. Run it again after `scripts/pre-push` changes.
 
 ## Status
 
