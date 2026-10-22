@@ -1,0 +1,7 @@
+# Release build tools, used by .github/workflows/release.yml only. The wheel and sdist are
+# built without build isolation, so setuptools is this pinned one, not whatever is newest.
+# Compile with: pip-compile --generate-hashes --allow-unsafe requirements-release.in
+build==1.6.1
+setuptools==84.0.0
+packaging==26.3
+pyproject_hooks==1.3.3

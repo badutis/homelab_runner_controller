@@ -1,0 +1,77 @@
+name: Release
+
+# Pushing an annotated tag vX.Y.Z on main publishes a GitHub release: the wheel, the sdist,
+# SHA256SUMS, one build provenance attestation covering both artifacts, and the CHANGELOG
+# section as notes. Running the workflow by hand on a branch (workflow_dispatch) rehearses
+# everything except the attestation and the release, so a release can be checked before the
+# tag is pushed.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release
+      id-token: write # sign the attestations
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # history and origin/main, for the checks below
+          persist-credentials: false # the write token stays out of the test and build steps
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Version, tag and changelog agree
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            python scripts/release.py check --tag "$GITHUB_REF_NAME"
+          else
+            python scripts/release.py check
+          fi
+      - name: Nothing installation-specific in what is released
+        run: python scripts/public_safe.py --history
+      - name: Tests
+        run: python -m unittest discover -s tests -t .
+
+      - name: Build tools (pinned by hash)
+        run: python -m pip install --require-hashes --no-deps -r requirements-release.txt
+      - name: Build wheel and sdist
+        # No build isolation: the pinned setuptools builds, not whatever is newest.
+        run: python -m build --no-isolation --outdir dist .
+      - name: The wheel installs and runs
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install --no-deps dist/*.whl
+          /tmp/check/bin/wakeci version
+          /tmp/check/bin/wakeci check controller/config.example.json
+      - name: Checksums and notes
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          python scripts/release.py notes "$(python -c 'import wakeci; print(wakeci.__version__)')" > notes.md
+          cat notes.md
+
+      - name: Attest build provenance
+        if: github.ref_type == 'tag'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - name: Publish the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "WakeCI $GITHUB_REF_NAME" --notes-file notes.md

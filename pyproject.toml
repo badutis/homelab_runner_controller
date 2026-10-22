@@ -28,6 +28,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/badutis/wakeci"
 Issues = "https://github.com/badutis/wakeci/issues"
+Changelog = "https://github.com/badutis/wakeci/blob/main/CHANGELOG.md"
 
 [project.scripts]
 wakeci = "wakeci.cli:main"
@@ -52,7 +53,7 @@ select = ["E", "W", "F", "B", "I", "UP", "SIM"]
 
 [tool.mypy]
 python_version = "3.10"  # the oldest mypy 2 can target; 3.9 itself is covered by the test matrix
-files = ["wakeci", "controller/check_config.py", "scripts/public_safe.py"]
+files = ["wakeci", "controller/check_config.py", "scripts/public_safe.py", "scripts/release.py"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
