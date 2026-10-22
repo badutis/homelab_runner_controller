@@ -92,8 +92,8 @@ class FakeGitHub:
 ROUTES = {
     "repos/o/r/actions/runners": (
         {"runners": [
-            {"name": "host1-a-1", "status": "online", "busy": True, "labels": [{"name": "self-hosted"}, {"name": "light"}]},
-            {"name": "host2-a-1", "status": "offline", "busy": False, "labels": [{"name": "npm"}]},
+            {"name": "host1-a-1", "status": "online", "busy": True, "labels": [{"name": "self-hosted"}, {"name": "small"}]},
+            {"name": "host2-a-1", "status": "offline", "busy": False, "labels": [{"name": "large"}]},
         ]},
         '"r1"',
     ),
@@ -101,9 +101,9 @@ ROUTES = {
     "repos/o/r/actions/runs?status=in_progress": ({"workflow_runs": []}, None),
     "repos/o/r/actions/runs/7/jobs": (
         {"jobs": [
-            {"status": "queued", "labels": ["self-hosted", "home", "npm"]},
+            {"status": "queued", "labels": ["self-hosted", "pool", "large"]},
             {"status": "queued", "labels": ["ubuntu-24.04"]},
-            {"status": "in_progress", "labels": ["self-hosted", "home", "light"]},
+            {"status": "in_progress", "labels": ["self-hosted", "pool", "small"]},
         ]},
         None,
     ),
@@ -116,7 +116,7 @@ class GitHubTest(unittest.TestCase):
         obs = gh.observe()
         self.assertEqual([(r.name, r.online, r.busy) for r in obs.runners], [("host1-a-1", True, True), ("host2-a-1", False, False)])
         # Tik eilėje laukiantys savo runner'io job'ai; GitHub runner'io job'as ne.
-        self.assertEqual([q.labels for q in obs.queued], [frozenset({"self-hosted", "home", "npm"})])
+        self.assertEqual([q.labels for q in obs.queued], [frozenset({"self-hosted", "pool", "large"})])
         self.assertEqual({q.source for q in obs.queued} | {r.source for r in obs.runners}, {"repos/o/r"})
         self.assertTrue(obs.complete)
 
@@ -144,7 +144,9 @@ class ConfigTest(unittest.TestCase):
         cfg = main.load_config(str(HERE / "orangepi" / "config.example.json"))
         self.assertTrue(cfg["dry_run"])
         machines = main.machines_from(cfg)
-        self.assertEqual([m.name for m in machines], ["host1", "host2", "host3", "host4"])
+        self.assertEqual([m.name for m in machines], ["host1", "host2", "host3"])
+        self.assertEqual([m.rank for m in machines], [1, 1, 2])
+        self.assertEqual({m.ssh_user for m in machines}, {"rackctl"})
         for m in machines:
             actions.magic_packet(m.mac)
 
@@ -221,7 +223,7 @@ class GitHubResilienceTest(unittest.TestCase):
         # Runner'is paėmė job'ą: paleidimas dabar in_progress, job'ų sąrašas pasikeitė.
         fake.routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
         fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
-        fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": [{"status": "in_progress", "labels": ["self-hosted", "home", "npm"]}]}, None)
+        fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": [{"status": "in_progress", "labels": ["self-hosted", "pool", "large"]}]}, None)
         self.assertEqual(gh.observe().queued, ())
 
     def test_changed_in_progress_run_is_refetched(self):
@@ -277,7 +279,7 @@ class MetricsTest(unittest.TestCase):
             sources, errors, remaining = [], {}, {}
 
         now = datetime.now(timezone.utc)
-        q = frozenset({"self-hosted", "home", "npm"})
+        q = frozenset({"self-hosted", "pool", "large"})
         obs = Observation(runners=(), queued=(
             QueuedJob(labels=q, since=now - timedelta(minutes=7)),
             QueuedJob(labels=q, since=now - timedelta(minutes=1)),
@@ -288,7 +290,30 @@ class MetricsTest(unittest.TestCase):
         line = [l for l in m.text.splitlines() if l.startswith("rackctl_queued_oldest_seconds")]
         self.assertEqual(len(line), 1)
         self.assertTrue(415 <= float(line[0].split()[-1]) <= 425, line)
-        self.assertIn('rackctl_queued_jobs{labels="home,npm"} 3', m.text)
+        self.assertIn('rackctl_queued_jobs{labels="large,pool"} 3', m.text)
+
+    def test_metric_names_and_types_do_not_change(self):
+        # The monitoring host scrapes these names; renaming one breaks its dashboards and
+        # alerts without any error here. A new metric is added to this list on purpose.
+        from rackctl.decide import Controller, Observation
+
+        class G:
+            sources, errors, remaining = [], {}, {}
+
+        m = main.Metrics()
+        m.update(Controller(machines=()), {}, G(), {}, Observation(runners=(), queued=()), True)
+        types = [l.split()[2:4] for l in m.text.splitlines() if l.startswith("# TYPE ")]
+        self.assertEqual(types, [
+            ["rackctl_machine_awake", "gauge"],
+            ["rackctl_machine_waking", "gauge"],
+            ["rackctl_actions_total", "counter"],
+            ["rackctl_runner_busy_seconds_total", "counter"],
+            ["rackctl_queued_jobs", "gauge"],
+            ["rackctl_queued_oldest_seconds", "gauge"],
+            ["rackctl_github_ok", "gauge"],
+            ["rackctl_github_remaining", "gauge"],
+            ["rackctl_dry_run", "gauge"],
+        ])
 
 
 if __name__ == "__main__":

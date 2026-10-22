@@ -13,7 +13,7 @@
       "repos": [
         "example-org/app"
       ],
-      "token_file": "/etc/rackctl/token-a"
+      "token_file": "/etc/rackctl/token-example-org"
     },
     {
       "runners_path": "orgs/example-org2",
@@ -21,14 +21,15 @@
         "example-org2/repo-a",
         "example-org2/repo-b"
       ],
-      "token_file": "/etc/rackctl/token-b"
+      "token_file": "/etc/rackctl/token-example-org2"
     }
   ],
   "machines": [
     {
       "name": "host1",
       "mac": "00:00:5e:00:53:01",
-      "host": "192.0.2.128",
+      "host": "192.0.2.11",
+      "ssh_user": "rackctl",
       "runner_prefixes": [
         "host1-a-",
         "host1-b-"
@@ -38,32 +39,22 @@
     {
       "name": "host2",
       "mac": "00:00:5e:00:53:02",
-      "host": "192.0.2.140",
+      "host": "192.0.2.12",
+      "ssh_user": "rackctl",
       "runner_prefixes": [
-        "host2-a-",
-        "host2-b-"
+        "host2-a-"
       ],
       "rank": 1
     },
     {
       "name": "host3",
       "mac": "00:00:5e:00:53:03",
-      "host": "192.0.2.141",
+      "host": "192.0.2.13",
+      "ssh_user": "rackctl",
       "runner_prefixes": [
-        "host3-a-",
-        "host3-b-"
+        "host3-a-"
       ],
-      "rank": 1
-    },
-    {
-      "name": "host4",
-      "mac": "00:00:5e:00:53:04",
-      "host": "192.0.2.143",
-      "runner_prefixes": [
-        "host4-a-",
-        "host4-b-"
-      ],
-      "rank": 1
+      "rank": 2
     }
   ]
 }
