@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# Local notes for the coding assistant; never committed.
+CLAUD?.md
