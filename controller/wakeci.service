@@ -1,0 +1,20 @@
+[Unit]
+Description=WakeCI: wakes CI runner machines for queued jobs, suspends idle ones
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=wakeci
+Group=wakeci
+WorkingDirectory=/opt/wakeci
+ExecStart=/usr/bin/python3 -m wakeci /etc/wakeci/config.json
+Restart=always
+RestartSec=10
+StateDirectory=wakeci
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

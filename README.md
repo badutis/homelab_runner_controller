@@ -1,4 +1,4 @@
-# homelab_runner_controller
+# WakeCI
 
 Wakes self-hosted GitHub Actions runner machines when jobs for them are queued, and
 suspends them after they have been idle for a while. It runs on any small always-on Linux
@@ -7,7 +7,7 @@ or Raspberry Pi (512 MB RAM is plenty), or an x86 machine.
 
 - **Wake:** a Wake-on-LAN magic packet, sent when queued jobs outnumber the free online
   runners that could take them.
-- **Sleep:** one restricted SSH command (`rack-sleep`) that suspends the machine (S3)
+- **Sleep:** one restricted SSH command (`wakeci-sleep`) that suspends the machine (S3)
   only if no job is running on it.
 - **Read-only towards GitHub:** it polls the REST API with read-only tokens. It needs no
   inbound connection, webhook or token that can change anything.
@@ -22,16 +22,16 @@ How the decisions are made, the security model and the known limits are describe
 
 | Path | Runs on | What it does |
 |---|---|---|
-| `rackctl/decide.py` | controller | when to wake and when to suspend; pure logic, no I/O |
-| `rackctl/github.py` | controller | reads runners and queued jobs (GET only, ETag caching) |
-| `rackctl/actions.py` | controller | Wake-on-LAN packet, suspend over SSH |
-| `rackctl/main.py` | controller | the loop, `/metrics`, the state file |
+| `wakeci/decide.py` | controller | when to wake and when to suspend; pure logic, no I/O |
+| `wakeci/github.py` | controller | reads runners and queued jobs (GET only, ETag caching) |
+| `wakeci/actions.py` | controller | Wake-on-LAN packet, suspend over SSH |
+| `wakeci/main.py` | controller | the loop, `/metrics`, the state file |
 | `controller/install.sh` | controller | installs or updates the controller on its host |
 | `controller/deploy.sh` | your computer | packs one version with your configuration and installs it on the host |
 | `controller/check_config.py` | both | checks a configuration before it is installed |
 | `controller/` (other files) | controller | example configuration and the `systemd` unit |
-| `machine/rack-sleep` | runner machine | suspends the machine unless a job is running |
-| `machine/install.sh` | runner machine | installs `rack-sleep`, the `sudoers` rule, the restricted key and Wake-on-LAN |
+| `machine/wakeci-sleep` | runner machine | suspends the machine unless a job is running |
+| `machine/install.sh` | runner machine | installs `wakeci-sleep`, the `sudoers` rule, the restricted key and Wake-on-LAN |
 | `scripts/public_safe.py` | CI, pre-push | refuses private addresses, MAC addresses, personal emails and AI attribution |
 | `scripts/pre-push`, `scripts/install-hooks.sh` | your computer | runs that check before every push |
 
@@ -64,11 +64,11 @@ How the decisions are made, the security model and the known limits are describe
 **On each runner machine** (as root, from a checkout of this repository):
 
 ```bash
-sudo bash machine/install.sh --user rackctl --ci-user runner --pubkey /tmp/rackctl.pub
+sudo bash machine/install.sh --user wakeci --ci-user runner --pubkey /tmp/wakeci.pub
 ```
 
 - `--user` is the account the controller logs in as. It gets the controller's public key,
-  restricted to the single command `sudo -n /usr/local/sbin/rack-sleep`.
+  restricted to the single command `sudo -n /usr/local/sbin/wakeci-sleep`.
 - `--ci-user` is the account that runs CI jobs. The script refuses to give it the key.
 - `--iface` (default `eno1`) is the interface Wake-on-LAN is enabled on.
 
@@ -89,7 +89,7 @@ on a machine with a real disk.
 
 `deploy.sh` packs that tag's code (`git archive`, not your working tree) and your
 `config.json`, checks the configuration with that version's checker (the SSH key,
-`known_hosts` and the token files must be directly in `/etc/rackctl/`), copies the bundle
+`known_hosts` and the token files must be directly in `/etc/wakeci/`), copies the bundle
 with `scp` and runs `controller/install.sh` on the host with `sudo`. The host needs no
 access to GitHub for this.
 
@@ -98,40 +98,40 @@ access to GitHub for this.
 1. checks that the host runs systemd; prints its model, architecture and memory; installs
    `python3` and `openssh-client` with `apt` if they are missing (elsewhere it stops and
    says what to install);
-2. creates the system user `rackctl` (no home, no login shell);
-3. puts the code at `/opt/rackctl/rackctl/` (owned by root, precompiled) and a copy of
-   the installer at `/opt/rackctl/controller/`;
-4. installs the configuration as `/etc/rackctl/config.json` (`0640`, group `rackctl`);
+2. creates the system user `wakeci` (no home, no login shell);
+3. puts the code at `/opt/wakeci/wakeci/` (owned by root, precompiled) and a copy of
+   the installer at `/opt/wakeci/controller/`;
+4. installs the configuration as `/etc/wakeci/config.json` (`0640`, group `wakeci`);
 5. creates the SSH key for the machines **on the host**, if there is none yet
-   (`/etc/rackctl/id_ed25519`, `0600`, owner `rackctl`), and prints its public key for
+   (`/etc/wakeci/id_ed25519`, `0600`, owner `wakeci`), and prints its public key for
    `machine/install.sh --pubkey`;
 6. scans the host key of every machine that is not in `known_hosts` yet, and prints its
    fingerprint. Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
    machine. A sleeping machine cannot be scanned: run the installer again once it is
    awake. Until then the controller cannot suspend it;
 7. with `--ram-journal` only, keeps the systemd journal in RAM (`Storage=volatile`);
-8. installs and enables `rackctl.service`, and starts it only if every token file the
-   configuration names exists and is readable by `rackctl`.
+8. installs and enables `wakeci.service`, and starts it only if every token file the
+   configuration names exists and is readable by `wakeci`.
 
 A run without `--set-token` never replaces an existing SSH key, host key or token. Run it
 again at any time:
 
 ```bash
-sudo bash /opt/rackctl/controller/install.sh
+sudo bash /opt/wakeci/controller/install.sh
 ```
 
 **Tokens** are typed on the host, never put in the bundle:
 
 ```bash
-ssh -t <ssh-target> sudo bash /opt/rackctl/controller/install.sh --set-token token-example-org
+ssh -t <ssh-target> sudo bash /opt/wakeci/controller/install.sh --set-token token-example-org
 ```
 
-This reads the token without echoing it and writes `/etc/rackctl/<name>` (`0600`, owner
-`rackctl`). The name must match the `token_file` in your configuration. The webhook URL
+This reads the token without echoing it and writes `/etc/wakeci/<name>` (`0600`, owner
+`wakeci`). The name must match the `token_file` in your configuration. The webhook URL
 for notifications (below) is set the same way: `--set-token notify-url`. When every file
 is in place, run the installer again to start the service.
 
-**Watch it** with `journalctl -u rackctl -f` and `curl http://<host>:9105/metrics`.
+**Watch it** with `journalctl -u wakeci -f` and `curl http://<host>:9105/metrics`.
 While `"dry_run": true`, it only logs what it would do. When the log looks right, set
 `"dry_run": false` in your configuration and deploy again.
 
@@ -144,9 +144,9 @@ While `"dry_run": true`, it only logs what it would do. When the log looks right
 | `idle_minutes` | `30` | how long all runners of a machine must be idle before it is suspended |
 | `broadcast` | `255.255.255.255` | where Wake-on-LAN packets are sent (the segment's broadcast address) |
 | `metrics_listen` | `0.0.0.0:9105` | address of the `/metrics` endpoint |
-| `state_file` | `/var/lib/rackctl/last-online.json` | when each machine was last online |
-| `ssh_key` | — | private key used for `rack-sleep` |
-| `known_hosts` | `/etc/rackctl/known_hosts` | host keys of the machines (checked strictly) |
+| `state_file` | `/var/lib/wakeci/last-online.json` | when each machine was last online |
+| `ssh_key` | — | private key used for `wakeci-sleep` |
+| `known_hosts` | `/etc/wakeci/known_hosts` | host keys of the machines (checked strictly) |
 | `notify` | — | optional: where to send notifications (below) |
 | `sources[]` | — | where runners are registered and whose jobs use them (below) |
 | `machines[]` | — | the machines (below) |
@@ -190,7 +190,7 @@ also posts to a webhook (a Discord or Slack channel, or anything that takes JSON
 
 ```json
 "notify": {
-  "url_file": "/etc/rackctl/notify-url",
+  "url_file": "/etc/wakeci/notify-url",
   "format": "discord",
   "after_minutes": 10,
   "repeat_hours": 6
@@ -198,7 +198,7 @@ also posts to a webhook (a Discord or Slack channel, or anything that takes JSON
 ```
 
 - `url_file` holds the webhook URL. The URL is a secret, because anyone who has it can post
-  to your channel. So it lives in its own file in `/etc/rackctl/`, set with
+  to your channel. So it lives in its own file in `/etc/wakeci/`, set with
   `install.sh --set-token notify-url`, and it is never written to the log.
 - `format`: `discord` (`{"content": …}`, mentions disabled), `slack` (`{"text": …}`) or
   `json` (`{"event", "key", "text", "resolved"}`).
@@ -218,7 +218,7 @@ What is sent:
 
 Messages are posted from a separate thread. A slow or broken webhook never holds up the
 control loop. A post that fails (an error answer, a rate limit, a timeout) is logged
-without the URL, counted once in `rackctl_notify_failed_total` and sent again every 5
+without the URL, counted once in `wakeci_notify_failed_total` and sent again every 5
 minutes, for up to 24 hours, with the time it first failed. A retry is dropped when it
 has gone stale: the problem ended, or for a "resolved" message the problem came back and was
 reported, or a newer message with the same subject was sent.
@@ -231,16 +231,16 @@ The URL must be `https` (plain `http` only to `localhost`, for a local relay).
 
 | Metric | Type | Labels |
 |---|---|---|
-| `rackctl_machine_awake` | gauge | `machine` |
-| `rackctl_machine_waking` | gauge | `machine` |
-| `rackctl_actions_total` | counter | `kind`, `machine` |
-| `rackctl_runner_busy_seconds_total` | counter | `runner` |
-| `rackctl_queued_jobs` | gauge | `labels` |
-| `rackctl_queued_oldest_seconds` | gauge | `labels` |
-| `rackctl_github_ok` | gauge | `source` |
-| `rackctl_github_remaining` | gauge | `source` |
-| `rackctl_dry_run` | gauge | — |
-| `rackctl_notify_failed_total` | counter | — |
+| `wakeci_machine_awake` | gauge | `machine` |
+| `wakeci_machine_waking` | gauge | `machine` |
+| `wakeci_actions_total` | counter | `kind`, `machine` |
+| `wakeci_runner_busy_seconds_total` | counter | `runner` |
+| `wakeci_queued_jobs` | gauge | `labels` |
+| `wakeci_queued_oldest_seconds` | gauge | `labels` |
+| `wakeci_github_ok` | gauge | `source` |
+| `wakeci_github_remaining` | gauge | `source` |
+| `wakeci_dry_run` | gauge | — |
+| `wakeci_notify_failed_total` | counter | — |
 
 The names are pinned by a test (`tests/test_io.py`). A monitoring system that scrapes
 them breaks without any error when a name changes.
@@ -249,7 +249,7 @@ them breaks without any error when a name changes.
 
 ```bash
 python3 -m unittest discover -s tests -t .
-shellcheck machine/install.sh machine/rack-sleep controller/install.sh controller/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
+shellcheck machine/install.sh machine/wakeci-sleep controller/install.sh controller/deploy.sh tests/install_smoke.sh scripts/pre-push scripts/install-hooks.sh
 python3 scripts/public_safe.py --history
 ```
 

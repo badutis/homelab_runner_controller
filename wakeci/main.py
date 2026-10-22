@@ -1,4 +1,4 @@
-"""Running the controller: `python3 -m rackctl /etc/rackctl/config.json`.
+"""Running the controller: `python3 -m wakeci /etc/wakeci/config.json`.
 
 Every `poll_seconds` it asks GitHub, passes the answer to `Controller.step` and carries
 out the actions. While `dry_run` is `true` (the default), actions are only logged.
@@ -19,7 +19,7 @@ from .decide import Action, Controller, Machine, MachineState, Observation, Sett
 from .github import GitHub, Source, read_token
 from .notify import Notifier, Outbox, Sender, read_url
 
-log = logging.getLogger("rackctl")
+log = logging.getLogger("wakeci")
 
 
 def load_config(path: str) -> dict:
@@ -30,8 +30,8 @@ def load_config(path: str) -> dict:
     cfg.setdefault("idle_minutes", 30)
     cfg.setdefault("broadcast", "255.255.255.255")
     cfg.setdefault("metrics_listen", "0.0.0.0:9105")
-    cfg.setdefault("state_file", "/var/lib/rackctl/last-online.json")
-    cfg.setdefault("known_hosts", "/etc/rackctl/known_hosts")
+    cfg.setdefault("state_file", "/var/lib/wakeci/last-online.json")
+    cfg.setdefault("known_hosts", "/etc/wakeci/known_hosts")
     return cfg
 
 
@@ -69,7 +69,7 @@ def notifications(cfg: dict, version: str) -> "tuple[Notifier, Optional[Sender]]
         after=timedelta(minutes=n.get("after_minutes", 10)),
         repeat=timedelta(hours=n.get("repeat_hours", 6)),
     )
-    return notifier, Sender(read_url(n["url_file"]), n["format"], f"rackctl/{version}")
+    return notifier, Sender(read_url(n["url_file"]), n["format"], f"wakeci/{version}")
 
 
 def sources_from(cfg: dict) -> List[Source]:
@@ -151,34 +151,34 @@ class Metrics:
         notify_failed: int = 0,
     ) -> None:
         lines = [
-            "# HELP rackctl_machine_awake 1 when at least one runner of the machine is online.",
-            "# TYPE rackctl_machine_awake gauge",
+            "# HELP wakeci_machine_awake 1 when at least one runner of the machine is online.",
+            "# TYPE wakeci_machine_awake gauge",
         ]
         for name, s in sorted(ctl.state.items()):
-            lines.append(f'rackctl_machine_awake{{machine="{name}"}} {int(s.awake)}')
-        lines += ["# TYPE rackctl_machine_waking gauge"]
+            lines.append(f'wakeci_machine_awake{{machine="{name}"}} {int(s.awake)}')
+        lines += ["# TYPE wakeci_machine_waking gauge"]
         for name, s in sorted(ctl.state.items()):
-            lines.append(f'rackctl_machine_waking{{machine="{name}"}} {int(s.wake_sent is not None)}')
-        lines += ["# TYPE rackctl_actions_total counter"]
+            lines.append(f'wakeci_machine_waking{{machine="{name}"}} {int(s.wake_sent is not None)}')
+        lines += ["# TYPE wakeci_actions_total counter"]
         for key, value in sorted(counters.items()):
             kind, machine = key.split("/", 1)
-            lines.append(f'rackctl_actions_total{{kind="{kind}",machine="{machine}"}} {value}')
+            lines.append(f'wakeci_actions_total{{kind="{kind}",machine="{machine}"}} {value}')
         lines += [
-            "# HELP rackctl_runner_busy_seconds_total Seconds the runner was seen busy (20 s polls).",
-            "# TYPE rackctl_runner_busy_seconds_total counter",
+            "# HELP wakeci_runner_busy_seconds_total Seconds the runner was seen busy (20 s polls).",
+            "# TYPE wakeci_runner_busy_seconds_total counter",
         ]
         for name, secs in sorted(busy_seconds.items()):
-            lines.append(f'rackctl_runner_busy_seconds_total{{runner="{name}"}} {secs:.0f}')
-        lines += ["# TYPE rackctl_queued_jobs gauge"]
+            lines.append(f'wakeci_runner_busy_seconds_total{{runner="{name}"}} {secs:.0f}')
+        lines += ["# TYPE wakeci_queued_jobs gauge"]
         queued: Dict[str, int] = {}
         for job in obs.queued if obs else ():
             key = ",".join(sorted(job.labels - {"self-hosted"}))
             queued[key] = queued.get(key, 0) + 1
         for key, n in sorted(queued.items()):
-            lines.append(f'rackctl_queued_jobs{{labels="{key}"}} {n}')
+            lines.append(f'wakeci_queued_jobs{{labels="{key}"}} {n}')
         # How long the oldest queued job has waited: the queue length is not enough for a
         # "waiting too long" alert, because a queue that keeps moving is not empty either.
-        lines += ["# TYPE rackctl_queued_oldest_seconds gauge"]
+        lines += ["# TYPE wakeci_queued_oldest_seconds gauge"]
         oldest: Dict[str, float] = {}
         now = datetime.now(timezone.utc)
         for job in obs.queued if obs else ():
@@ -187,19 +187,19 @@ class Metrics:
             key = ",".join(sorted(job.labels - {"self-hosted"}))
             oldest[key] = max(oldest.get(key, 0.0), (now - job.since).total_seconds())
         for key, secs in sorted(oldest.items()):
-            lines.append(f'rackctl_queued_oldest_seconds{{labels="{key}"}} {secs:.0f}')
-        lines += ["# TYPE rackctl_github_ok gauge"]
+            lines.append(f'wakeci_queued_oldest_seconds{{labels="{key}"}} {secs:.0f}')
+        lines += ["# TYPE wakeci_github_ok gauge"]
         for src in gh.sources:
             ok = int(src.runners_path not in gh.errors)
-            lines.append(f'rackctl_github_ok{{source="{src.runners_path}"}} {ok}')
-        lines += ["# TYPE rackctl_github_remaining gauge"]
+            lines.append(f'wakeci_github_ok{{source="{src.runners_path}"}} {ok}')
+        lines += ["# TYPE wakeci_github_remaining gauge"]
         for source, rem in sorted(gh.remaining.items()):
-            lines.append(f'rackctl_github_remaining{{source="{source}"}} {rem}')
-        lines += ["# TYPE rackctl_dry_run gauge", f"rackctl_dry_run {int(dry_run)}"]
+            lines.append(f'wakeci_github_remaining{{source="{source}"}} {rem}')
+        lines += ["# TYPE wakeci_dry_run gauge", f"wakeci_dry_run {int(dry_run)}"]
         lines += [
-            "# HELP rackctl_notify_failed_total Webhook messages whose post failed (retries not counted).",
-            "# TYPE rackctl_notify_failed_total counter",
-            f"rackctl_notify_failed_total {notify_failed}",
+            "# HELP wakeci_notify_failed_total Webhook messages whose post failed (retries not counted).",
+            "# TYPE wakeci_notify_failed_total counter",
+            f"wakeci_notify_failed_total {notify_failed}",
         ]
         with self.lock:
             self.text = "\n".join(lines) + "\n"
@@ -285,7 +285,7 @@ def run(cfg: dict) -> None:
 
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
     notify(notifier.event(
-        "start", f"rackctl {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
+        "start", f"wakeci {version} started: {len(machines)} machines, dry_run={str(dry_run).lower()}.",
         datetime.now(timezone.utc)))
 
     while True:
@@ -296,11 +296,11 @@ def run(cfg: dict) -> None:
             if pause is not None and pause > now:
                 log.warning("GitHub limit nearly used up; waiting until %s", pause.isoformat())
                 notify(notifier.problem(
-                    "limit", f"rackctl: GitHub request limit nearly used up; not polling until "
+                    "limit", f"wakeci: GitHub request limit nearly used up; not polling until "
                     f"{pause.strftime('%Y-%m-%d %H:%M UTC')}. Machines are neither woken nor suspended "
                     "meanwhile.", now, wait=False))
             else:
-                notify(notifier.clear("limit", "rackctl: GitHub request limit reset; polling again.", now))
+                notify(notifier.clear("limit", "wakeci: GitHub request limit reset; polling again.", now))
                 obs = gh.observe()
                 for source, err in gh.errors.items():
                     log.warning("source %s not read: %s", source, err)
@@ -309,10 +309,10 @@ def run(cfg: dict) -> None:
                     err = gh.errors.get(src.runners_path)
                     if err is not None:
                         notify(notifier.problem(
-                            key, f"rackctl: GitHub source {src.runners_path} cannot be read: {err}. "
+                            key, f"wakeci: GitHub source {src.runners_path} cannot be read: {err}. "
                             "No machine is suspended while this lasts (check its token).", now))
                     else:
-                        notify(notifier.clear(key, f"rackctl: GitHub source {src.runners_path} is readable again.", now))
+                        notify(notifier.clear(key, f"wakeci: GitHub source {src.runners_path} is readable again.", now))
                 if last_poll is not None:
                     elapsed = min((now - last_poll).total_seconds(), 2 * cfg["poll_seconds"])
                     for r in obs.runners:
@@ -331,14 +331,14 @@ def run(cfg: dict) -> None:
                         result = f"error: {e!r}"
                     log.info("%s %s: %s — %s", a.kind, a.machine, a.reason, result)
                     if a.kind == "alert":
-                        notify(notifier.event(f"wake:{a.machine}", f"rackctl: {a.machine} {a.reason}.", now))
+                        notify(notifier.event(f"wake:{a.machine}", f"wakeci: {a.machine} {a.reason}.", now))
                     if a.kind == "sleep" and not result.startswith(act.SLEEP_OK):
                         counters[f"sleep_failed/{a.machine}"] = counters.get(f"sleep_failed/{a.machine}", 0) + 1
                         if ctl.sleep_failed(a.machine, now):
                             log.error("alert %s: failed to suspend 3 times in a row — %s", a.machine, result)
                             notify(notifier.event(
                                 f"sleep:{a.machine}",
-                                f"rackctl: {a.machine} failed to suspend 3 times in a row: {result}.", now))
+                                f"wakeci: {a.machine} failed to suspend 3 times in a row: {result}.", now))
                 current = snapshot(ctl.state)
                 if _days(current) != _days(saved) or _holds(current) != _holds(saved):
                     save_state(cfg["state_file"], current)
@@ -363,7 +363,7 @@ def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
 def main(argv: List[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if len(argv) != 2:
-        print("usage: python3 -m rackctl /etc/rackctl/config.json", file=sys.stderr)
+        print("usage: python3 -m wakeci /etc/wakeci/config.json", file=sys.stderr)
         return 2
     run(load_config(argv[1]))
     return 0

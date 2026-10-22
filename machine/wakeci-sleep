@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Suspends this machine unless a job is running on it. Only the controller runs it, over an
 # SSH key that authorized_keys restricts to this one command; sudoers allows it without a
-# password. Exit codes: rackctl/actions.py SLEEP_EXIT.
+# password. Exit codes: wakeci/actions.py SLEEP_EXIT.
 set -euo pipefail
 
 # This check decides, not the GitHub API: the API reports a busy runner late.

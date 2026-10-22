@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Prepares one CI machine for the controller: rack-sleep, a sudoers line, the controller's
+# Prepares one CI machine for the controller: wakeci-sleep, a sudoers line, the controller's
 # restricted key, Wake-on-LAN. Run on the machine itself:
 #
-#   sudo bash install.sh --user rackctl --ci-user runner --pubkey /tmp/rackctl.pub [--iface eno1]
+#   sudo bash install.sh --user wakeci --ci-user runner --pubkey /tmp/wakeci.pub [--iface eno1]
 #
 # --ci-user is the account that runs CI jobs: it never gets the key.
 # Running it again duplicates nothing. Wake-on-LAN is enabled in the BIOS by hand
@@ -38,13 +38,13 @@ grep -qE '^ssh-(ed25519|rsa) ' "$PUBKEY" || die "--pubkey is not an SSH public k
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # 1. The suspend command.
-install -o root -g root -m 0755 "$HERE/rack-sleep" /usr/local/sbin/rack-sleep
+install -o root -g root -m 0755 "$HERE/wakeci-sleep" /usr/local/sbin/wakeci-sleep
 
 # 2. sudo without a password, for this command only. Checked before it is put in place.
 SUDOERS_TMP="$(mktemp)"
-echo "$USER_NAME ALL=(root) NOPASSWD: /usr/local/sbin/rack-sleep" > "$SUDOERS_TMP"
+echo "$USER_NAME ALL=(root) NOPASSWD: /usr/local/sbin/wakeci-sleep" > "$SUDOERS_TMP"
 visudo -cf "$SUDOERS_TMP" >/dev/null || die "invalid sudoers line"
-install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/rack-sleep
+install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/wakeci-sleep
 rm -f "$SUDOERS_TMP"
 
 # 3. The controller's key, restricted to one command.
@@ -55,7 +55,7 @@ touch "$AUTH"
 chown "$USER_NAME:$USER_NAME" "$AUTH"
 chmod 0600 "$AUTH"
 KEY="$(awk '{print $1" "$2}' "$PUBKEY")"
-WANT="command=\"sudo -n /usr/local/sbin/rack-sleep\",restrict $KEY rackctl"
+WANT="command=\"sudo -n /usr/local/sbin/wakeci-sleep\",restrict $KEY wakeci"
 # Any other line with the same key (say, added by hand while testing, without the
 # restriction) is removed: this key must never give a full shell.
 FILTERED="$(mktemp)"

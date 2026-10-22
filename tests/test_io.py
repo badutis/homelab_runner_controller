@@ -7,8 +7,8 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
-from rackctl import actions, github, main
-from rackctl.decide import Machine
+from wakeci import actions, github, main
+from wakeci.decide import Machine
 
 M = Machine("host1", "00:00:5e:00:53:01", "192.0.2.128", "host1", ("host1-a-",), 1)
 HERE = Path(__file__).resolve().parents[1]
@@ -146,12 +146,12 @@ class ConfigTest(unittest.TestCase):
         machines = main.machines_from(cfg)
         self.assertEqual([m.name for m in machines], ["host1", "host2", "host3"])
         self.assertEqual([m.rank for m in machines], [1, 1, 2])
-        self.assertEqual({m.ssh_user for m in machines}, {"rackctl"})
+        self.assertEqual({m.ssh_user for m in machines}, {"wakeci"})
         for m in machines:
             actions.magic_packet(m.mac)
 
     def test_state_round_trip_keeps_both_fields(self):
-        from rackctl.decide import MachineState
+        from wakeci.decide import MachineState
 
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "sub" / "state.json")
@@ -273,7 +273,7 @@ class MetricsTest(unittest.TestCase):
     def test_oldest_queued_wait_per_labels(self):
         from datetime import timedelta
 
-        from rackctl.decide import Controller, Observation, QueuedJob
+        from wakeci.decide import Controller, Observation, QueuedJob
 
         class G:
             sources, errors, remaining = [], {}, {}
@@ -287,15 +287,15 @@ class MetricsTest(unittest.TestCase):
         ))
         m = main.Metrics()
         m.update(Controller(machines=()), {}, G(), {}, obs, True)
-        line = [l for l in m.text.splitlines() if l.startswith("rackctl_queued_oldest_seconds")]
+        line = [l for l in m.text.splitlines() if l.startswith("wakeci_queued_oldest_seconds")]
         self.assertEqual(len(line), 1)
         self.assertTrue(415 <= float(line[0].split()[-1]) <= 425, line)
-        self.assertIn('rackctl_queued_jobs{labels="large,pool"} 3', m.text)
+        self.assertIn('wakeci_queued_jobs{labels="large,pool"} 3', m.text)
 
     def test_metric_names_and_types_do_not_change(self):
         # The monitoring host scrapes these names; renaming one breaks its dashboards and
         # alerts without any error here. A new metric is added to this list on purpose.
-        from rackctl.decide import Controller, Observation
+        from wakeci.decide import Controller, Observation
 
         class G:
             sources, errors, remaining = [], {}, {}
@@ -304,16 +304,16 @@ class MetricsTest(unittest.TestCase):
         m.update(Controller(machines=()), {}, G(), {}, Observation(runners=(), queued=()), True)
         types = [l.split()[2:4] for l in m.text.splitlines() if l.startswith("# TYPE ")]
         self.assertEqual(types, [
-            ["rackctl_machine_awake", "gauge"],
-            ["rackctl_machine_waking", "gauge"],
-            ["rackctl_actions_total", "counter"],
-            ["rackctl_runner_busy_seconds_total", "counter"],
-            ["rackctl_queued_jobs", "gauge"],
-            ["rackctl_queued_oldest_seconds", "gauge"],
-            ["rackctl_github_ok", "gauge"],
-            ["rackctl_github_remaining", "gauge"],
-            ["rackctl_dry_run", "gauge"],
-            ["rackctl_notify_failed_total", "counter"],
+            ["wakeci_machine_awake", "gauge"],
+            ["wakeci_machine_waking", "gauge"],
+            ["wakeci_actions_total", "counter"],
+            ["wakeci_runner_busy_seconds_total", "counter"],
+            ["wakeci_queued_jobs", "gauge"],
+            ["wakeci_queued_oldest_seconds", "gauge"],
+            ["wakeci_github_ok", "gauge"],
+            ["wakeci_github_remaining", "gauge"],
+            ["wakeci_dry_run", "gauge"],
+            ["wakeci_notify_failed_total", "counter"],
         ])
 
 

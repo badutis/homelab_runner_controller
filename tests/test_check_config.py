@@ -40,12 +40,12 @@ class CheckConfigTest(unittest.TestCase):
         lines = [l.split("\t") for l in out.splitlines()]
         self.assertEqual([k for k, _ in lines].count("token"), 3)  # two sources and the webhook URL
         self.assertEqual([k for k, _ in lines].count("host"), 3)
-        self.assertIn(["ssh_key", "/etc/rackctl/id_ed25519"], lines)
+        self.assertIn(["ssh_key", "/etc/wakeci/id_ed25519"], lines)
 
     def test_notify_is_optional_and_its_url_file_is_listed_as_a_token(self):
         self.assertEqual(run(changed(notify=lambda c: c.pop("notify")))[0], 0)
         code, out, _ = run(EXAMPLE)
-        self.assertIn("token\t/etc/rackctl/notify-url", out.splitlines())
+        self.assertIn("token\t/etc/wakeci/notify-url", out.splitlines())
 
     def test_sources_may_share_one_token_file(self):
         cfg = changed(sources=lambda c: c["sources"][1].update(token_file=c["sources"][0]["token_file"]))
@@ -56,14 +56,14 @@ class CheckConfigTest(unittest.TestCase):
             "not json": "{",
             "no ssh_key": changed(ssh_key=lambda c: c.pop("ssh_key")),
             "relative key": changed(ssh_key="id_ed25519"),
-            "key outside /etc/rackctl": changed(ssh_key="/etc/id_rackctl"),
-            "known_hosts outside /etc/rackctl": changed(known_hosts="/etc/ssh/ssh_known_hosts"),
-            "key in a subdirectory": changed(ssh_key="/etc/rackctl/keys/id"),
-            "key is the config": changed(ssh_key="/etc/rackctl/config.json"),
-            "known_hosts is the public key": changed(known_hosts="/etc/rackctl/id_ed25519.pub"),
-            "token is known_hosts": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/rackctl/known_hosts")),
-            "token is the config": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/rackctl/config.json")),
-            "token outside /etc/rackctl": changed(sources=lambda c: c["sources"][0].update(token_file="/var/lib/rackctl/t")),
+            "key outside /etc/wakeci": changed(ssh_key="/etc/id_wakeci"),
+            "known_hosts outside /etc/wakeci": changed(known_hosts="/etc/ssh/ssh_known_hosts"),
+            "key in a subdirectory": changed(ssh_key="/etc/wakeci/keys/id"),
+            "key is the config": changed(ssh_key="/etc/wakeci/config.json"),
+            "known_hosts is the public key": changed(known_hosts="/etc/wakeci/id_ed25519.pub"),
+            "token is known_hosts": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/known_hosts")),
+            "token is the config": changed(sources=lambda c: c["sources"][0].update(token_file="/etc/wakeci/config.json")),
+            "token outside /etc/wakeci": changed(sources=lambda c: c["sources"][0].update(token_file="/var/lib/wakeci/t")),
             "dry_run as text": changed(dry_run="false"),
             "idle_minutes as text": changed(idle_minutes="30"),
             "poll_seconds zero": changed(poll_seconds=0),
@@ -74,9 +74,9 @@ class CheckConfigTest(unittest.TestCase):
             "prefix not a string": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[1])),
             "notify not an object": changed(notify="yes"),
             "notify unknown key": changed(notify=lambda c: c["notify"].update(channel="x")),
-            "notify url_file outside /etc/rackctl": changed(notify=lambda c: c["notify"].update(url_file="/tmp/u")),
+            "notify url_file outside /etc/wakeci": changed(notify=lambda c: c["notify"].update(url_file="/tmp/u")),
             "notify url_file is a token": changed(notify=lambda c: c["notify"].update(url_file=c["sources"][0]["token_file"])),
-            "notify url_file is the key": changed(notify=lambda c: c["notify"].update(url_file="/etc/rackctl/id_ed25519")),
+            "notify url_file is the key": changed(notify=lambda c: c["notify"].update(url_file="/etc/wakeci/id_ed25519")),
             "notify bad format": changed(notify=lambda c: c["notify"].update(format="teams")),
             "notify no format": changed(notify=lambda c: c["notify"].pop("format")),
             "notify negative wait": changed(notify=lambda c: c["notify"].update(after_minutes=-1)),

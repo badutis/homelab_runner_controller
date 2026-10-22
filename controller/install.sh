@@ -10,20 +10,20 @@
 # spare an SD card. All logs are then lost on reboot, so use it only on such a board. Without
 # it the journal is left as it is.
 #
-# The installed copy (/opt/rackctl/controller/install.sh) works the same way, so after the
-# first install `sudo bash /opt/rackctl/controller/install.sh` re-runs it in place.
+# The installed copy (/opt/wakeci/controller/install.sh) works the same way, so after the
+# first install `sudo bash /opt/wakeci/controller/install.sh` re-runs it in place.
 #
 # Running it again only changes what differs. A run without --set-token never overwrites
 # an existing SSH key, a known host key or a token. The service is (re)started only when the
 # configuration and every token file it names are in place.
 set -euo pipefail
 
-ETC=/etc/rackctl
-OPT=/opt/rackctl
-UNIT=/etc/systemd/system/rackctl.service
-JOURNALD_DROPIN=/etc/systemd/journald.conf.d/50-rackctl-volatile.conf
-SVC_USER=rackctl
-# The unit runs exactly this interpreter (controller/rackctl.service), so it is the one checked.
+ETC=/etc/wakeci
+OPT=/opt/wakeci
+UNIT=/etc/systemd/system/wakeci.service
+JOURNALD_DROPIN=/etc/systemd/journald.conf.d/50-wakeci-volatile.conf
+SVC_USER=wakeci
+# The unit runs exactly this interpreter (controller/wakeci.service), so it is the one checked.
 PY=/usr/bin/python3
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,8 +89,8 @@ if [ -n "$TOKEN_NAME" ]; then
   exit 0
 fi
 
-[ -f "$SRC/rackctl/__main__.py" ] || die "no rackctl/ package next to controller/ (run from an unpacked bundle)"
-for f in rackctl.service check_config.py config.example.json; do
+[ -f "$SRC/wakeci/__main__.py" ] || die "no wakeci/ package next to controller/ (run from an unpacked bundle)"
+for f in wakeci.service check_config.py config.example.json; do
   [ -f "$HERE/$f" ] || die "controller/$f missing"
 done
 [ -z "$VERSION" ] || [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]] || die "bad --version"
@@ -143,21 +143,21 @@ fi
 # --- the code ----------------------------------------------------------------------------
 # Copied next to the old one and swapped in, so a failed copy leaves the old code working.
 install -d -o root -g root -m 0755 "$OPT"
-rm -rf "$OPT/rackctl.new" "$OPT/rackctl.old"
-cp -R "$SRC/rackctl" "$OPT/rackctl.new"
-find "$OPT/rackctl.new" -name '__pycache__' -prune -exec rm -rf {} +
-chown -R root:root "$OPT/rackctl.new"
-find "$OPT/rackctl.new" -type d -exec chmod 0755 {} +
-find "$OPT/rackctl.new" -type f -exec chmod 0644 {} +
+rm -rf "$OPT/wakeci.new" "$OPT/wakeci.old"
+cp -R "$SRC/wakeci" "$OPT/wakeci.new"
+find "$OPT/wakeci.new" -name '__pycache__' -prune -exec rm -rf {} +
+chown -R root:root "$OPT/wakeci.new"
+find "$OPT/wakeci.new" -type d -exec chmod 0755 {} +
+find "$OPT/wakeci.new" -type f -exec chmod 0644 {} +
 # Compiled now, as root: the service may not write to /opt (ProtectSystem=strict).
-"$PY" -m compileall -q "$OPT/rackctl.new" >/dev/null
-[ -d "$OPT/rackctl" ] && mv "$OPT/rackctl" "$OPT/rackctl.old"
-mv "$OPT/rackctl.new" "$OPT/rackctl"
-rm -rf "$OPT/rackctl.old"
+"$PY" -m compileall -q "$OPT/wakeci.new" >/dev/null
+[ -d "$OPT/wakeci" ] && mv "$OPT/wakeci" "$OPT/wakeci.old"
+mv "$OPT/wakeci.new" "$OPT/wakeci"
+rm -rf "$OPT/wakeci.old"
 # The installer itself, so that tokens can be set and the install re-run later.
 if [ "$SRC" != "$OPT" ]; then
   install -d -o root -g root -m 0755 "$OPT/controller"
-  for f in install.sh check_config.py rackctl.service config.example.json; do
+  for f in install.sh check_config.py wakeci.service config.example.json; do
     install -o root -g root -m 0644 "$HERE/$f" "$OPT/controller/$f"
   done
 fi
@@ -167,7 +167,7 @@ if [ -n "$VERSION" ]; then
 elif [ "$SRC" != "$OPT" ]; then
   rm -f "$OPT/VERSION"  # new code of an unknown version: the old number would be wrong
 fi
-note "code: $OPT/rackctl ($(cat "$OPT/VERSION" 2>/dev/null || echo "no version"))"
+note "code: $OPT/wakeci ($(cat "$OPT/VERSION" 2>/dev/null || echo "no version"))"
 
 # --- the configuration -------------------------------------------------------------------
 install -d -o root -g "$SVC_USER" -m 0750 "$ETC"
@@ -196,7 +196,7 @@ if [ "$START" = yes ]; then
 
   # --- SSH key for the machines (made here, never leaves this host) -----------------------
   if [ ! -f "$KEY" ]; then
-    ssh-keygen -q -t ed25519 -N '' -C "rackctl@$(hostname)" -f "$KEY"
+    ssh-keygen -q -t ed25519 -N '' -C "wakeci@$(hostname)" -f "$KEY"
     note "new SSH key $KEY"
   fi
   chown -h "$SVC_USER:$SVC_USER" "$KEY"
@@ -257,23 +257,23 @@ elif [ -f "$JOURNALD_DROPIN" ]; then
 fi
 
 # --- the service -------------------------------------------------------------------------
-install -o root -g root -m 0644 "$HERE/rackctl.service" "$UNIT"
+install -o root -g root -m 0644 "$HERE/wakeci.service" "$UNIT"
 systemctl daemon-reload
-systemctl enable rackctl.service >/dev/null || die "systemctl enable rackctl failed"
+systemctl enable wakeci.service >/dev/null || die "systemctl enable wakeci failed"
 if [ "$START" != yes ]; then
   note "service enabled, NOT started: fix the lines above and run again"
   exit 0
 fi
-if ! systemctl restart rackctl.service; then
-  journalctl -u rackctl.service -n 20 --no-pager >&2 || true
-  die "systemctl restart rackctl failed"
+if ! systemctl restart wakeci.service; then
+  journalctl -u wakeci.service -n 20 --no-pager >&2 || true
+  die "systemctl restart wakeci failed"
 fi
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
-  systemctl is-active --quiet rackctl.service || break
+  systemctl is-active --quiet wakeci.service || break
 done
-systemctl is-active --quiet rackctl.service || {
-  journalctl -u rackctl.service -n 20 --no-pager >&2 || true
-  die "rackctl did not stay up"
+systemctl is-active --quiet wakeci.service || {
+  journalctl -u wakeci.service -n 20 --no-pager >&2 || true
+  die "wakeci did not stay up"
 }
-note "rackctl is running: journalctl -u rackctl -f"
+note "wakeci is running: journalctl -u wakeci -f"

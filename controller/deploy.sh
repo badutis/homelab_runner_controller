@@ -13,7 +13,7 @@
 # access. sudo may ask for your password on the host.
 #
 # Tokens are never part of the bundle. Set them on the host afterwards:
-#   ssh -t <ssh-target> sudo bash /opt/rackctl/controller/install.sh --set-token <name>
+#   ssh -t <ssh-target> sudo bash /opt/wakeci/controller/install.sh --set-token <name>
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -49,19 +49,19 @@ VERSION="$(git -C "$REPO" describe --tags --exact-match "$COMMIT" 2>/dev/null ||
 [ -f "$CONFIG" ] || die "config not found: $CONFIG"
 # Versions before controller/ (v0.1.0) kept these scripts in orangepi/. Deploy one from a
 # checkout of that version, which its deploy.sh needs:
-#   git worktree add /tmp/rackctl-old v0.1.0 && /tmp/rackctl-old/orangepi/deploy.sh …
+#   git worktree add /tmp/wakeci-old v0.1.0 && /tmp/wakeci-old/orangepi/deploy.sh …
 git -C "$REPO" cat-file -e "$COMMIT:controller/install.sh" 2>/dev/null \
   || die "$VERSION has no controller/install.sh (an older layout); deploy it with that version's own deploy.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir "$WORK/bundle"
-git -C "$REPO" archive --format=tar "$COMMIT" rackctl controller LICENSE | tar -x -C "$WORK/bundle"
+git -C "$REPO" archive --format=tar "$COMMIT" wakeci controller LICENSE | tar -x -C "$WORK/bundle"
 cp "$CONFIG" "$WORK/bundle/config.json"
 # The same check the host runs, with the code of that version, before anything is copied.
 python3 "$WORK/bundle/controller/check_config.py" "$WORK/bundle/config.json" >/dev/null \
   || die "config rejected by $VERSION"
-NAME="rackctl-$VERSION"
+NAME="wakeci-$VERSION"
 # No macOS resource forks or extended attributes in the bundle (GNU and BSD tar both
 # know --no-xattrs).
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$WORK/$NAME.tar.gz" -C "$WORK/bundle" .
