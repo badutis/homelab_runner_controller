@@ -91,6 +91,11 @@ class CliTest(unittest.TestCase):
                 cli.main(["run", path])
         self.assertIn("no config_version", "\n".join(logs.output))
 
+    def test_a_misspelt_command_is_reported_as_one(self):
+        code, _, err = run("chek")
+        self.assertEqual(code, 2)
+        self.assertIn("invalid choice: 'chek'", err)
+
     def test_no_command_is_a_usage_error(self):
         code, _, err = run()
         self.assertEqual(code, 2)

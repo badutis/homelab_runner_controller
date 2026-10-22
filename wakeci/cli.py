@@ -10,6 +10,7 @@ controller.
 
 import argparse
 import logging
+import os
 import sys
 from typing import List, Optional
 
@@ -55,10 +56,11 @@ def _check(path: str, paths: bool) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    # The form before subcommands: `python3 -m wakeci CONFIG` (a missing file then fails as
-    # "not found", like `wakeci run` does, rather than as an unknown command).
-    if len(args) == 1 and args[0] not in COMMANDS and not args[0].startswith("-"):
-        args = ["run", args[0]]
+    # The form before subcommands: `python3 -m wakeci CONFIG`. Only a word that looks like a
+    # path is taken as one, so a misspelt command still gets argparse's "invalid choice".
+    a = args[0] if len(args) == 1 else ""
+    if a and a not in COMMANDS and not a.startswith("-") and ("/" in a or a.endswith(".json") or os.path.isfile(a)):
+        args = ["run", a]
     ns = _parser().parse_args(args)
     if ns.command == "version":
         print(f"wakeci {__version__}")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/badutis/wakeci/main/docs/config.schema.json",
   "title": "WakeCI configuration",
-  "description": "config.json of the WakeCI controller. `wakeci check` applies these rules and a few more (unique machine names, distinct files, a valid host, the metrics port range).",
+  "description": "config.json of the WakeCI controller. `wakeci check` applies these rules and a few more (unique machine names, distinct files, a valid host, the metrics port range, and whole numbers: JSON Schema treats 1.0 as an integer, wakeci check does not).",
   "type": "object",
   "additionalProperties": false,
   "required": ["ssh_key", "sources", "machines"],
