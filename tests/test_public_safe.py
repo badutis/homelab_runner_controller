@@ -143,6 +143,52 @@ class RepositoryTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"(blob)", out)
 
+    def test_annotated_tag_message_is_scanned(self):
+        code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"tag object [0-9a-f]{7} \(v1\):\d+: private address")
+
+    def test_file_that_is_not_utf8_is_still_read(self):
+        code, out = self.run_in_repo([f"ip {PRIV} ".encode() + b"\xe0\n"], raw=True, history=False)
+        self.assertEqual(code, 1)
+        self.assertIn(f"private address {PRIV}", out)
+
+    def test_dangling_symlink_and_deleted_file_do_not_crash(self):
+        def after(d, git):
+            os.symlink("does-not-exist", os.path.join(d, "link"))
+            git("add", "link")
+            git("commit", "-q", "-m", "link")
+            os.remove(os.path.join(d, "a.txt"))
+
+        self.assertEqual(self.run_in_repo(["x\n"], after=after), (0, ""))
+
+
+    def leak_also_at_the_guard_path(self, d, git, tag_only):
+        """The same leaking content at b.txt in an older commit and later at the guard's
+        own path, which is excluded from scanning."""
+        leak = f"host {PRIV}\n"
+        with open(os.path.join(d, "b.txt"), "w", encoding="utf-8") as f:
+            f.write(leak)
+        git("add", "b.txt")
+        git("commit", "-q", "-m", "b")
+        if tag_only:
+            git("tag", "side")
+            git("reset", "-q", "--hard", "HEAD~1")
+        else:
+            git("rm", "-q", "b.txt")
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        with open(os.path.join(d, "scripts", "public_safe.py"), "w", encoding="utf-8") as f:
+            f.write(leak)
+        git("add", "scripts/public_safe.py")
+        git("commit", "-q", "-m", "guard")
+
+    def test_content_at_the_guard_path_and_elsewhere_is_scanned_elsewhere(self):
+        for tag_only in (False, True):
+            code, out = self.run_in_repo(
+                ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only))
+            self.assertEqual(code, 1, tag_only)
+            self.assertIn(f"private address {PRIV}", out, tag_only)
+
 
 if __name__ == "__main__":
     unittest.main()

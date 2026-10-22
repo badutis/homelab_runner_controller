@@ -160,6 +160,18 @@ def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
         pos += size + 1  # the content is followed by a newline
 
 
+def only_at_self_paths(revs: List[str]) -> set:
+    """Blobs that appear in the history of ``revs`` at a SELF path and at no other path."""
+    out = git("log", "--raw", "--no-abbrev", "--no-renames", "-m", "--root", "--format=", *revs, "--")
+    seen_at: dict = {}
+    for line in out.decode(errors="replace").splitlines():
+        meta, _, path = line.partition("\t")
+        fields = meta.split()
+        if len(fields) >= 4 and line.startswith(":"):
+            seen_at.setdefault(fields[3], set()).add(path)
+    return {sha for sha, where in seen_at.items() if where and where <= SELF}
+
+
 def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
     """Every blob and every commit reachable from ``revs`` (commits read raw: author and
     committer names and emails, and the message, whatever characters it holds). A blob
@@ -168,9 +180,12 @@ def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
     for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         paths.setdefault(sha, path)
+    # rev-list names each blob by the first path it meets, so whether a blob is only ever
+    # this script is decided from every path it had in these commits.
+    self_only = only_at_self_paths(revs)
     for sha, kind, raw in read_objects(sorted(paths)):
         path = paths[sha]
-        if kind == "blob" and path not in SELF:
+        if kind == "blob" and sha not in self_only:
             text = decode(raw)
             if text is not None:
                 yield f"{path or '(blob)'}@{sha[:7]}", text
