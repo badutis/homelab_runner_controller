@@ -357,11 +357,12 @@ A release is an annotated tag `vX.Y.Z` on `main`, matching `__version__` in
 Verify a downloaded artifact:
 
 ```bash
-sha256sum -c SHA256SUMS
-gh attestation verify wakeci-X.Y.Z-py3-none-any.whl --repo badutis/wakeci
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify wakeci-X.Y.Z-py3-none-any.whl --repo badutis/wakeci \
+  --signer-workflow badutis/wakeci/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z
 ```
 
-Running the workflow by hand rehearses steps 1-4 without publishing anything.
+Running the workflow by hand on a branch rehearses steps 1-4 without publishing anything.
 
 ## Status
 

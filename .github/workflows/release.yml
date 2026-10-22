@@ -1,9 +1,10 @@
 name: Release
 
 # Pushing an annotated tag vX.Y.Z on main publishes a GitHub release: the wheel, the sdist,
-# SHA256SUMS, a build provenance attestation per artifact, and the CHANGELOG section as
-# notes. Running the workflow by hand (workflow_dispatch) rehearses everything except the
-# attestation and the release, so a release can be checked before the tag is pushed.
+# SHA256SUMS, one build provenance attestation covering both artifacts, and the CHANGELOG
+# section as notes. Running the workflow by hand on a branch (workflow_dispatch) rehearses
+# everything except the attestation and the release, so a release can be checked before the
+# tag is pushed.
 on:
   push:
     tags: ["v*"]
@@ -28,6 +29,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # history and origin/main, for the checks below
+          persist-credentials: false # the write token stays out of the test and build steps
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"

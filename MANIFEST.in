@@ -6,3 +6,4 @@ graft machine
 graft scripts
 graft tests
 global-exclude __pycache__ *.py[co]
+include CHANGELOG.md
