@@ -1,4 +1,4 @@
-"""Veiksmai su mašinomis: Wake-on-LAN paketas ir užmigdymas per SSH."""
+"""Actions on machines: the Wake-on-LAN packet and suspending over SSH."""
 
 import socket
 import subprocess
@@ -10,7 +10,7 @@ from .decide import Machine
 def magic_packet(mac: str) -> bytes:
     hexes = mac.replace(":", "").replace("-", "").lower()
     if len(hexes) != 12 or any(c not in "0123456789abcdef" for c in hexes):
-        raise ValueError(f"netinkamas MAC: {mac!r}")
+        raise ValueError(f"invalid MAC: {mac!r}")
     return b"\xff" * 6 + bytes.fromhex(hexes) * 16
 
 
@@ -21,19 +21,20 @@ def wake(machine: Machine, broadcast: str = "255.255.255.255", port: int = 9) ->
         s.sendto(packet, (broadcast, port))
 
 
-# `rack-sleep` išėjimo kodai (machine/rack-sleep). Jis užmigdymą suplanuoja po kelių
-# sekundžių ir išeina pirma, todėl SSH sesija baigiasi švariai, o ne nutrūksta.
-SLEEP_OK = ("užmigs", "persikraus")
+# Exit codes of `rack-sleep` (machine/rack-sleep). It schedules the suspend a few seconds
+# ahead and exits first, so the SSH session ends cleanly instead of being cut off.
+# A result that starts with one of SLEEP_OK means the machine is going down.
+SLEEP_OK = ("suspends", "reboots")
 SLEEP_EXIT = {
-    0: "užmigs po 5 s",
-    3: "atsisakė: mašinoje vyksta job'as",
-    4: "persikraus po 5 s: atnaujinimas prašė perkrovimo",
+    0: "suspends in 5 s",
+    3: "refused: a job is running on the machine",
+    4: "reboots in 5 s: an update asked for a reboot",
 }
 
 
 def ssh_sleep_command(machine: Machine, key_path: str, known_hosts: str) -> List[str]:
-    # Mašinos authorized_keys šį raktą riboja viena komanda (`command=`), todėl komandos
-    # čia neperduodame — ką paleisti, sprendžia mašina, ne valdiklis.
+    # The machine's authorized_keys restricts this key to one command (`command=`), so no
+    # command is passed here: the machine decides what runs, not the controller.
     return [
         "ssh",
         "-i", key_path,
@@ -51,7 +52,7 @@ def put_to_sleep(machine: Machine, key_path: str, known_hosts: str, run: Callabl
             ssh_sleep_command(machine, key_path, known_hosts), capture_output=True, text=True, timeout=30
         )
     except subprocess.TimeoutExpired:
-        return "SSH neatsakė per 30 s"
+        return "SSH did not answer within 30 s"
     if done.returncode == 255:
-        return f"SSH nepavyko: {done.stderr.strip()[:200]}"
-    return SLEEP_EXIT.get(done.returncode, f"nežinomas kodas {done.returncode}")
+        return f"SSH failed: {done.stderr.strip()[:200]}"
+    return SLEEP_EXIT.get(done.returncode, f"unknown exit code {done.returncode}")

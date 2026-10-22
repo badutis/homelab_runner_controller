@@ -206,5 +206,5 @@ up to the author.
 
 ## Status
 
-Not yet deployed. Log messages and code comments are still in Lithuanian. They will be
-translated in a separate change.
+Not yet deployed. Version `v0.1.0` is the first release; run it a week with
+`"dry_run": true` before turning that off.

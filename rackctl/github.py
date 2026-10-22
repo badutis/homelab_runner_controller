@@ -1,16 +1,16 @@
-"""GitHub API skaitymas: runner'iai ir job'ai eilėje. Tik GET, tik išeinantys ryšiai.
+"""Reading the GitHub API: runners and queued jobs. GET only, outbound connections only.
 
-Užklausų limitas (5 000 per valandą vienam raktui) saugomas trimis būdais:
+The request limit (5,000 per hour per token) is protected in three ways:
 
-- kiekvienas atsakymas saugomas su ETag; nepasikeitęs grąžina 304, kuris į limitą
-  neskaičiuojamas;
-- vykstančio paleidimo (`in_progress`) job'ai perklausiami ne kas ciklą, o kas
-  `IN_PROGRESS_REFRESH` (jo atsakymas kinta nuolat, todėl ETag ten nepadeda), o kai
-  likutis mažas — kas `IN_PROGRESS_REFRESH_LOW`;
-- kai likutis beveik baigėsi, `backoff_until` pasako ciklui palaukti iki atstatymo.
+- every response is kept with its ETag; an unchanged one returns 304, which does not
+  count against the limit;
+- jobs of an in-progress run are re-read not every poll but every `IN_PROGRESS_REFRESH`
+  (that response changes all the time, so ETags do not help there), and every
+  `IN_PROGRESS_REFRESH_LOW` when the remaining limit is low;
+- when the limit is nearly used up, `backoff_until` tells the loop to wait for the reset.
 
-Kiekvienas šaltinis skaitomas atskirai: vieno klaida (pasibaigęs raktas) neaklina kito,
-bet stebėjimas pažymimas nepilnu, ir tada niekas nemigdoma (decide.py).
+Each source is read on its own: an error in one (an expired token) does not blind the
+other, but the observation is marked incomplete, and then nothing is suspended (decide.py).
 """
 
 import json
@@ -31,10 +31,10 @@ STOP_REMAINING = 100
 
 @dataclass(frozen=True)
 class Source:
-    """Viena vieta, kurioje registruoti runner'iai, ir repozitorijos, kurių job'ai juos naudoja."""
+    """One place where runners are registered, and the repositories whose jobs use them."""
 
-    runners_path: str  # pvz. "repos/example-org/app" arba "orgs/example-org2"
-    repos: Tuple[str, ...]  # pvz. ("example-org/app",)
+    runners_path: str  # e.g. "repos/example-org/app" or "orgs/example-org2"
+    repos: Tuple[str, ...]  # e.g. ("example-org/app",)
     token: str
 
 
@@ -54,14 +54,14 @@ class GitHub:
         self._now = clock or (lambda: datetime.now(timezone.utc))
         self._cache: Dict[str, Tuple[str, object]] = {}
         self._touched: set = set()
-        # paleidimo jobs URL -> (kada perklausta, paleidimo updated_at, job'ai eilėje)
+        # run's jobs URL -> (when it was read, the run's updated_at, queued jobs)
         self._run_jobs: Dict[str, Tuple[datetime, str, List[QueuedJob]]] = {}
         self._kept: set = set()
-        self.remaining: Dict[str, int] = {}  # šaltinis -> likęs limitas
+        self.remaining: Dict[str, int] = {}  # source -> remaining limit
         self.reset_at: Dict[str, datetime] = {}
-        self.errors: Dict[str, str] = {}  # šaltinis -> paskutinė klaida
+        self.errors: Dict[str, str] = {}  # source -> last error
 
-    # --- užklausos ---------------------------------------------------------------------
+    # --- requests ----------------------------------------------------------------------
 
     def _note_limit(self, source: str, headers) -> None:
         if headers is None:
@@ -109,10 +109,10 @@ class GitHub:
                 return out
             page += 1
 
-    # --- stebėjimas --------------------------------------------------------------------
+    # --- observation -------------------------------------------------------------------
 
     def backoff_until(self) -> Optional[datetime]:
-        """Iki kada nebeklausti: kai kurio šaltinio limitas beveik baigėsi."""
+        """Until when to stop asking: some source's limit is nearly used up."""
         latest = None
         for source, rem in self.remaining.items():
             if rem < STOP_REMAINING and source in self.reset_at:
@@ -141,16 +141,16 @@ class GitHub:
                 got_jobs: List[QueuedJob] = []
                 for repo in src.repos:
                     got_jobs.extend(self._queued_jobs(repo, src))
-            except Exception as e:  # noqa: BLE001 — bet kokia vieno šaltinio klaida lieka jame
+            except Exception as e:  # noqa: BLE001 — any error of one source stays with that source
                 complete = False
                 self.errors[src.runners_path] = first_error(e) or repr(e)
                 continue
             self.errors.pop(src.runners_path, None)
             runners.extend(got_runners)
             queued.extend(got_jobs)
-        # Baigtų paleidimų atsakymų nebeprireiks; be šito atmintis augtų be ribos.
-        # Iš atminties paimto paleidimo ETag paliekamas: kitaip kitas jo perklausimas būtų
-        # be If-None-Match ir skaičiuotųsi į limitą net nepasikeitus.
+        # Responses of finished runs are no longer needed; without this, memory would grow
+        # without bound. The ETag of a run taken from memory is kept: otherwise its next
+        # re-read would go without If-None-Match and count against the limit unchanged.
         kept_urls = tuple(f"{API}/{p}?" for p in self._kept)
         self._cache = {
             k: v for k, v in self._cache.items() if k in self._touched or k.startswith(kept_urls)
@@ -163,17 +163,17 @@ class GitHub:
         now = self._now()
         low = self.remaining.get(src.runners_path, LOW_REMAINING) < LOW_REMAINING
         refresh = IN_PROGRESS_REFRESH_LOW if low else IN_PROGRESS_REFRESH
-        # Darbas eilėje gali būti ir dar nepradėtame (`queued`), ir jau vykstančiame
-        # (`in_progress`) paleidime, kai dalis jo job'ų jau gavo runner'į.
+        # Queued work can be in a run that has not started (`queued`) and in one that is
+        # already going (`in_progress`) when some of its jobs already have a runner.
         for status in ("queued", "in_progress"):
             runs = self._pages(f"repos/{repo}/actions/runs?status={status}", "workflow_runs", src)
             for run in runs:
                 path = f"repos/{repo}/actions/runs/{run['id']}/jobs"
                 seen = self._run_jobs.get(path)
                 updated = str(run.get("updated_at") or "")
-                # Senu sąrašu galima remtis tik tada, kai paleidimas nuo tada nepasikeitė:
-                # kitaip job'as, kurį runner'is ką tik paėmė, atrodytų vis dar laukiantis, ir
-                # valdiklis be reikalo žadintų kitą mašiną.
+                # The old list may be used only while the run has not changed since: otherwise
+                # a job a runner has just taken would still look queued, and the controller
+                # would wake another machine for nothing.
                 if status == "in_progress" and seen and seen[1] == updated and now - seen[0] < refresh:
                     self._kept.add(path)
                     out.extend(seen[2])
@@ -200,7 +200,7 @@ def read_token(path: str) -> str:
     with open(path, encoding="utf-8") as f:
         token = f.read().strip()
     if not token:
-        raise ValueError(f"tuščias raktas: {path}")
+        raise ValueError(f"empty token: {path}")
     return token
 
 
@@ -208,5 +208,5 @@ def first_error(exc: BaseException) -> Optional[str]:
     if isinstance(exc, urllib.error.HTTPError):
         return f"GitHub {exc.code} {exc.reason}"
     if isinstance(exc, urllib.error.URLError):
-        return f"tinklas: {exc.reason}"
+        return f"network: {exc.reason}"
     return None

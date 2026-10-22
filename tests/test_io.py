@@ -48,7 +48,7 @@ class SleepTest(unittest.TestCase):
         self.assertIn("UserKnownHostsFile=/kh", cmd)
 
     def test_exit_codes(self):
-        for code, word in ((0, "užmigs"), (3, "job'as"), (4, "persikraus"), (255, "SSH nepavyko"), (9, "nežinomas")):
+        for code, word in ((0, "suspends"), (3, "job is running"), (4, "reboots"), (255, "SSH failed"), (9, "unknown")):
             _, run = self.fake(code)
             self.assertIn(word, actions.put_to_sleep(M, "/k", "/kh", run=run))
 
@@ -58,7 +58,7 @@ class SleepTest(unittest.TestCase):
 
     def test_timeout(self):
         _, run = self.fake(timeout=True)
-        self.assertIn("neatsakė", actions.put_to_sleep(M, "/k", "/kh", run=run))
+        self.assertIn("did not answer", actions.put_to_sleep(M, "/k", "/kh", run=run))
 
 
 class FakeResponse(io.BytesIO):
@@ -115,7 +115,7 @@ class GitHubTest(unittest.TestCase):
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=FakeGitHub(ROUTES))
         obs = gh.observe()
         self.assertEqual([(r.name, r.online, r.busy) for r in obs.runners], [("host1-a-1", True, True), ("host2-a-1", False, False)])
-        # Tik eilėje laukiantys savo runner'io job'ai; GitHub runner'io job'as ne.
+        # Only queued jobs for our own runners; a job for a GitHub-hosted runner is not.
         self.assertEqual([q.labels for q in obs.queued], [frozenset({"self-hosted", "pool", "large"})])
         self.assertEqual({q.source for q in obs.queued} | {r.source for r in obs.runners}, {"repos/o/r"})
         self.assertTrue(obs.complete)
@@ -163,7 +163,7 @@ class ConfigTest(unittest.TestCase):
     def test_bad_state_files_are_ignored_not_fatal(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(main.load_state(str(Path(d) / "none.json")), {})
-            for text in ("{", "[]", '{"host1": "2026-10-17"}', '{"host1": {"last_online": "vakar"}}'):
+            for text in ("{", "[]", '{"host1": "2026-10-17"}', '{"host1": {"last_online": "yesterday"}}'):
                 f = Path(d) / "b.json"
                 f.write_text(text)
                 self.assertEqual(main.load_state(str(f)), {} if text in ("{", "[]", '{"host1": "2026-10-17"}') else {"host1": {}})
@@ -208,7 +208,7 @@ class GitHubResilienceTest(unittest.TestCase):
         gh.observe()
         gh.observe()
         self.assertEqual(job_calls(), 1)
-        self.assertEqual(len(gh.observe().queued), 1)  # atsakymas imamas iš atminties
+        self.assertEqual(len(gh.observe().queued), 1)  # the answer comes from memory
         now[0] = now[0] + github.IN_PROGRESS_REFRESH
         gh.observe()
         self.assertEqual(job_calls(), 2)
@@ -220,7 +220,7 @@ class GitHubResilienceTest(unittest.TestCase):
         fake = FakeGitHub(routes)
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake)
         self.assertEqual(len(gh.observe().queued), 1)
-        # Runner'is paėmė job'ą: paleidimas dabar in_progress, job'ų sąrašas pasikeitė.
+        # A runner took the job: the run is now in_progress and its job list changed.
         fake.routes["repos/o/r/actions/runs?status=queued"] = ({"workflow_runs": []}, None)
         fake.routes["repos/o/r/actions/runs?status=in_progress"] = ({"workflow_runs": [{"id": 7, "updated_at": "t2"}]}, None)
         fake.routes["repos/o/r/actions/runs/7/jobs"] = ({"jobs": [{"status": "in_progress", "labels": ["self-hosted", "pool", "large"]}]}, None)
@@ -246,7 +246,7 @@ class GitHubResilienceTest(unittest.TestCase):
         now = [datetime(2026, 10, 17, 12, tzinfo=timezone.utc)]
         gh = github.GitHub([github.Source("repos/o/r", ("o/r",), "t")], opener=fake, clock=lambda: now[0])
         gh.observe()
-        gh.observe()  # iš atminties
+        gh.observe()  # from memory
         now[0] = now[0] + github.IN_PROGRESS_REFRESH
         gh.observe()
         sent = [etag for url, etag in fake.seen if "/runs/7/jobs" in url]
@@ -266,7 +266,7 @@ class GitHubResilienceTest(unittest.TestCase):
 
     def test_created_at_is_parsed(self):
         self.assertEqual(github.parse_time("2026-10-17T10:15:34Z"), datetime(2026, 10, 17, 10, 15, 34, tzinfo=timezone.utc))
-        self.assertIsNone(github.parse_time("vakar"))
+        self.assertIsNone(github.parse_time("yesterday"))
 
 
 class MetricsTest(unittest.TestCase):

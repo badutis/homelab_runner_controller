@@ -42,12 +42,12 @@ def kinds(actions):
 
 
 class Fleet:
-    """host1 ir host4 — small (greitos), host5 — small (lėta, rank 2), host2 — large (greita)."""
+    """host1 and host4: small (fast); host5: small (slow, rank 2); host2: large (fast)."""
 
     def __init__(self):
         self.ctl = Controller(machines=(machine(1), machine(4), machine(5, rank=2), machine(2)))
         for s in self.ctl.state.values():
-            s.last_online = T0  # savaitinis pažadinimas netrukdo testams
+            s.last_online = T0  # keeps the weekly wake out of the tests
 
     def view(self, awake=(), busy=None, queued=(), complete=True):
         busy = busy or {}
@@ -137,12 +137,12 @@ class SleepTest(unittest.TestCase):
     def test_does_not_sleep_with_its_label_in_the_queue(self):
         f = Fleet()
         f.ctl.step(f.view(awake=(1,), busy={1: 4}), T0)
-        # Visi užimti 40 min, o eilėje dar vienas — pažadinama kita, ši nemigdoma.
+        # All busy for 40 min and one more queued: another machine is woken, this one stays up.
         got = kinds(f.ctl.step(f.view(awake=(1,), queued=[Q_SMALL]), T0 + 40 * MIN))
         self.assertNotIn(("sleep", "host1"), got)
 
     def test_sleep_is_not_resent_every_poll(self):
-        # GitHub dar kurį laiką rodo užmigusios mašinos runner'ius prisijungusius.
+        # For a while GitHub still shows the runners of a suspended machine as online.
         f = Fleet()
         f.ctl.step(f.view(awake=(1,)), T0)
         f.ctl.step(f.view(awake=(1,)), T0 + 30 * MIN)
@@ -179,7 +179,7 @@ class WeeklyTest(unittest.TestCase):
 
 
 class ReviewFindingsTest(unittest.TestCase):
-    """Peržiūros (2026-10-17) radiniai, po vieną testą kiekvienam."""
+    """Review findings (2026-10-17), one test each."""
 
     def test_job_needing_a_label_no_runner_has_wakes_nothing_and_keeps_nothing_awake(self):
         f = Fleet()
@@ -212,7 +212,7 @@ class ReviewFindingsTest(unittest.TestCase):
         awake = obs(runners(1, SMALL, 4, True))
         ctl.step(awake, T0)
         self.assertEqual(kinds(ctl.step(awake, T0 + 30 * MIN)), [("sleep", "host1")])
-        # Runner'iai dar „online“, bet mašina jau užmiga: job'as turi ją pažadinti.
+        # Runners still "online" but the machine is going to sleep: the job must wake it.
         got = kinds(ctl.step(obs(runners(1, SMALL, 4, True), [Q_SMALL]), T0 + 31 * MIN))
         self.assertEqual(got, [("wake", "host1")])
 
@@ -221,21 +221,21 @@ class ReviewFindingsTest(unittest.TestCase):
         f.ctl.step(f.view(queued=[Q_LARGE]), T0)
         f.ctl.step(f.view(awake=(2,)), T0 + MIN)
         f.ctl.step(f.view(awake=(2,), busy={2: 1}), T0 + 10 * MIN)
-        f.ctl.step(f.view(awake=(2,)), T0 + 50 * MIN)  # užmigdoma
-        # Užmigo: jokio „pakartotinio“ pažadinimo be priežasties.
+        f.ctl.step(f.view(awake=(2,)), T0 + 50 * MIN)  # being suspended
+        # Asleep: no "repeated" wake without a reason.
         self.assertEqual(f.ctl.step(f.view(), T0 + 60 * MIN), [])
 
     def test_wake_sent_to_an_awake_machine_is_forgotten(self):
-        # Pažadinimas išsiųstas, kol mašina dar buvo „užmigdoma“, bet ji neužmigo ir dirbo.
+        # A wake was sent while the machine was "being suspended", but it stayed up and worked.
         ctl = Controller(machines=(machine(1),))
         ctl.state["host1"].last_online = T0
         awake = obs(runners(1, SMALL, 4, True))
         ctl.step(awake, T0)
-        ctl.step(awake, T0 + 30 * MIN)  # užmigdoma
-        ctl.step(obs(runners(1, SMALL, 4, True), [Q_SMALL]), T0 + 31 * MIN)  # pažadinama
+        ctl.step(awake, T0 + 30 * MIN)  # being suspended
+        ctl.step(obs(runners(1, SMALL, 4, True), [Q_SMALL]), T0 + 31 * MIN)  # woken
         ctl.step(obs(runners(1, SMALL, 4, True, busy=1)), T0 + 40 * MIN)
-        # Po valandos mašina dingsta pati (perkrovimas), be valdiklio užmigdymo:
-        # senas pažadinimas neturi sukelti „pakartotinio“.
+        # An hour later the machine goes away by itself (a reboot), not suspended by us:
+        # the old wake must not cause a "repeated" one.
         self.assertEqual(ctl.step(obs(runners(1, SMALL, 4, False)), T0 + 100 * MIN), [])
 
     def test_job_a_free_runner_ignores_for_30_min_stops_keeping_it_awake(self):
@@ -244,11 +244,11 @@ class ReviewFindingsTest(unittest.TestCase):
         f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0)
         self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 29 * MIN), [])
         self.assertEqual(kinds(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 30 * MIN)), [("sleep", "host1")])
-        # Ir ką tik užmigdytos mašinos atgal nežadina.
+        # And a machine just suspended is not woken back up.
         self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[stuck]), T0 + 31 * MIN), [])
 
     def test_old_job_seen_after_an_outage_still_wakes(self):
-        # Valdiklis neveikė valandą; job'as sukurtas seniai, bet joks runner'is jo negalėjo imti.
+        # The controller was down for an hour; the job is old, but no runner could take it.
         f = Fleet()
         old = QueuedJob(labels=Q_LARGE, id=2, since=T0 - 60 * MIN)
         self.assertEqual(kinds(f.ctl.step(f.view(queued=[old]), T0)), [("wake", "host2")])
@@ -258,7 +258,7 @@ class ReviewFindingsTest(unittest.TestCase):
         job = QueuedJob(labels=Q_LARGE, id=3)
         f.ctl.step(f.view(queued=[job]), T0)
         f.ctl.step(f.view(queued=[job]), T0 + 3 * MIN)
-        f.ctl.step(f.view(queued=[job]), T0 + 6 * MIN)  # pranešimas, atidėta 30 min
+        f.ctl.step(f.view(queued=[job]), T0 + 6 * MIN)  # alert, backed off for 30 min
         self.assertEqual(kinds(f.ctl.step(f.view(queued=[job]), T0 + 37 * MIN)), [("wake", "host2")])
 
     def test_runners_joining_one_by_one_do_not_wake_a_second_machine(self):
@@ -276,7 +276,7 @@ class ReviewFindingsTest(unittest.TestCase):
         f.ctl.step(f.view(awake=(1,)), T0)
         f.ctl.step(f.view(awake=(1,)), T0 + 30 * MIN)
         self.assertFalse(f.ctl.sleep_failed("host1", T0 + 30 * MIN))
-        # Atsisakė: laisvi runner'iai vėl skaičiuojami, todėl kitos mašinos nežadinama.
+        # Refused: its free runners count again, so no other machine is woken.
         self.assertEqual(f.ctl.step(f.view(awake=(1,), queued=[Q_SMALL]), T0 + 31 * MIN), [])
         self.assertFalse(f.ctl.sleep_failed("host1", T0 + 61 * MIN))
         self.assertTrue(f.ctl.sleep_failed("host1", T0 + 91 * MIN))
@@ -293,7 +293,7 @@ class ReviewFindingsTest(unittest.TestCase):
         asleep = obs(runners(1, SMALL, 4, False))
         alerts = 0
         t = T0
-        for _ in range(int(5 * 60 / 1)):  # 5 val. kas minutę
+        for _ in range(int(5 * 60 / 1)):  # 5 hours, once a minute
             alerts += sum(1 for a in ctl.step(asleep, t) if a.kind == "alert")
             t += MIN
         self.assertEqual(alerts, 1)
