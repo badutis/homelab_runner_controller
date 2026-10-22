@@ -225,6 +225,10 @@ of the branch and of every tag, and every tag object, not only the latest commit
 addresses or the names of real machines, users and repositories. Keeping those out is
 up to the author.
 
+The guard scans its own source too, so nothing in it may look like a finding: networks are
+written as numbers and tool names are built from pieces. A test checks this. Earlier
+versions of the file, which spelled the patterns out, are skipped by their exact object id.
+
 CI runs that check only after a push, when the commit is already public. Install the
 pre-push hook once per clone, so that a push holding a finding is refused on your own
 computer instead:

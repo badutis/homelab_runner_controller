@@ -182,12 +182,36 @@ class RepositoryTest(unittest.TestCase):
         git("add", "scripts/public_safe.py")
         git("commit", "-q", "-m", "guard")
 
+    def test_a_leak_inside_the_guard_file_itself_is_found(self):
+        def after(d, git):
+            os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+            with open(os.path.join(d, "scripts", "public_safe.py"), "w", encoding="utf-8") as f:
+                f.write(f"# host {PRIV}\n")
+            git("add", "scripts/public_safe.py")
+            git("commit", "-q", "-m", "guard")
+
+        code, out = self.run_in_repo(["x\n"], after=after)
+        self.assertEqual(code, 1)
+        self.assertIn("scripts/public_safe.py", out)
+
     def test_content_at_the_guard_path_and_elsewhere_is_scanned_elsewhere(self):
         for tag_only in (False, True):
             code, out = self.run_in_repo(
                 ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only))
             self.assertEqual(code, 1, tag_only)
             self.assertIn(f"private address {PRIV}", out, tag_only)
+
+
+class GuardSourceTest(unittest.TestCase):
+    def test_the_guard_finds_nothing_in_its_own_source(self):
+        # It is scanned like any other file; a pattern written out in it would fail CI.
+        path = os.path.join(os.path.dirname(__file__), "..", "scripts", "public_safe.py")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(ps.scan_lines("scripts/public_safe.py", f.read()), [])
+
+    def test_earlier_versions_are_listed_by_full_object_id(self):
+        for sha in ps.EARLIER_VERSIONS_OF_THIS_FILE:
+            self.assertRegex(sha, r"^[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

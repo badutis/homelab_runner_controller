@@ -38,21 +38,30 @@ import subprocess
 import sys
 from typing import Iterable, Iterator, List, Optional, Tuple
 
-# This file spells the patterns out, so it is not scanned. Its test builds its bad samples
-# at run time and is scanned like any other file.
-SELF = {"scripts/public_safe.py"}
+# This file is scanned like any other, so nothing in it may look like a finding: the
+# networks are numbers, not dotted text, and the tool names are built from pieces
+# (tests/test_public_safe.py checks this). Earlier versions of this file spelled the
+# patterns out; those exact versions, and only they, are skipped by content.
+EARLIER_VERSIONS_OF_THIS_FILE = frozenset(
+    {
+        "3dcfd868f25aa5a1df3eb47402d62195e26721c3",
+        "6c9a9be268bbec4b591b8a501038a5b18c3250cb",
+        "941f5fc56ebf9b4ad21eb0e4cff753f15d4b6b49",
+        "9e06094e2b33a1cc3fa08e590856bbb28ce56396",
+        "c2d487a9b878802870a85d897c1d2f5b5a77e2c0",
+        "c3d341dd8f702ac52ca005474a757bfd2d77b10c",
+        "e3ecc93cea68bd98eba1e14325a425c7744fe85a",
+    }
+)
 
 PRIVATE_NETS = [
-    ipaddress.ip_network(n)
-    for n in (
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "100.64.0.0/10",
-        "169.254.0.0/16",
-        "fc00::/7",
-        "fe80::/10",
-    )
+    ipaddress.IPv4Network((0x0A000000, 8)),
+    ipaddress.IPv4Network((0xAC100000, 12)),
+    ipaddress.IPv4Network((0xC0A80000, 16)),
+    ipaddress.IPv4Network((0x64400000, 10)),  # carrier-grade NAT
+    ipaddress.IPv4Network((0xA9FE0000, 16)),  # link-local
+    ipaddress.IPv6Network((0xFC << 120, 7)),  # unique-local
+    ipaddress.IPv6Network((0xFE80 << 112, 10)),  # link-local
 ]
 # A trailing dot ends a sentence and is allowed; a dot followed by a digit is not.
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d)(?!\.\d)")
@@ -65,15 +74,16 @@ MAC_DOTTED = re.compile(r"(?<![0-9A-Fa-f.])([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9
 MAC_ALLOWED = re.compile(r"^(00005e0053[0-9a-f]{2}|f{12}|0{11}[0-9a-f])$")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 EMAIL_ALLOWED = re.compile(r"(@users\.noreply\.github\.com|^noreply@github\.com|@example\.(com|org|net))$", re.I)
-# Letters only around the name, so "claude_code" and "ClaudeCode" are caught too.
-AI = re.compile(r"(?<![A-Za-z])(claude|anthropic|chatgpt|openai|copilot)", re.I)
+# No letter before the name, so it is caught inside snake_case and CamelCase words too.
+AI_TOOLS = ("clau" + "de", "anthro" + "pic", "chat" + "gpt", "open" + "ai", "co" + "pilot")
+AI = re.compile(r"(?<![A-Za-z])(" + "|".join(AI_TOOLS) + ")", re.I)
 
 
 def _ipv4(text: str) -> Optional[ipaddress.IPv4Address]:
     parts = text.split(".")
     if any(int(p) > 255 for p in parts):
         return None
-    # "192.168.001.010" is refused by ipaddress, but it is still that address.
+    # Octets with leading zeros are refused by ipaddress, but they are still that address.
     return ipaddress.IPv4Address(".".join(str(int(p)) for p in parts))
 
 
@@ -133,7 +143,7 @@ def index_files() -> Iterable[Tuple[str, str]]:
             continue
         meta, path = entry.split("\t", 1)
         mode, sha = meta.split()[:2]
-        if path in SELF or mode == "160000":
+        if mode == "160000":
             continue
         text = decode(git("cat-file", "blob", sha))
         if text is not None:
@@ -160,18 +170,6 @@ def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
         pos += size + 1  # the content is followed by a newline
 
 
-def only_at_self_paths(revs: List[str]) -> set:
-    """Blobs that appear in the history of ``revs`` at a SELF path and at no other path."""
-    out = git("log", "--raw", "--no-abbrev", "--no-renames", "-m", "--root", "--format=", *revs, "--")
-    seen_at: dict = {}
-    for line in out.decode(errors="replace").splitlines():
-        meta, _, path = line.partition("\t")
-        fields = meta.split()
-        if len(fields) >= 4 and line.startswith(":"):
-            seen_at.setdefault(fields[3], set()).add(path)
-    return {sha for sha, where in seen_at.items() if where and where <= SELF}
-
-
 def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
     """Every blob and every commit reachable from ``revs`` (commits read raw: author and
     committer names and emails, and the message, whatever characters it holds). A blob
@@ -180,12 +178,9 @@ def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
     for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
         sha, _, path = line.partition(" ")
         paths.setdefault(sha, path)
-    # rev-list names each blob by the first path it meets, so whether a blob is only ever
-    # this script is decided from every path it had in these commits.
-    self_only = only_at_self_paths(revs)
     for sha, kind, raw in read_objects(sorted(paths)):
         path = paths[sha]
-        if kind == "blob" and sha not in self_only:
+        if kind == "blob" and sha not in EARLIER_VERSIONS_OF_THIS_FILE:
             text = decode(raw)
             if text is not None:
                 yield f"{path or '(blob)'}@{sha[:7]}", text
