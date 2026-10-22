@@ -135,6 +135,19 @@ is in place, run the installer again to start the service.
 While `"dry_run": true`, it only logs what it would do. When the log looks right, set
 `"dry_run": false` in your configuration and deploy again.
 
+**Upgrading from `rackctl` (v0.1.0-v0.3.0).** The project was renamed in v0.4.0, and every
+name changed with it. The new install does not touch the old one, so on the controller host:
+
+1. Stop the old unit: `systemctl disable --now rackctl`.
+2. Install WakeCI as above. It creates a new SSH key and asks for the tokens again
+   (`--set-token`), and the configuration paths become `/etc/wakeci/…`.
+3. On every runner machine, run the new `machine/install.sh` with the new public key. Then
+   remove `/usr/local/sbin/rack-sleep`, `/etc/sudoers.d/rack-sleep` and the old key line in
+   `authorized_keys`.
+4. Remove `/etc/rackctl`, `/opt/rackctl`, `/etc/systemd/system/rackctl.service` and the
+   `rackctl` user.
+5. Monitoring: the metrics are now `wakeci_*`.
+
 ## Configuration
 
 | Key | Default | Meaning |

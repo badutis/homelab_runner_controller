@@ -47,11 +47,13 @@ COMMIT="$(git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}")" || die "no
 VERSION="$(git -C "$REPO" describe --tags --exact-match "$COMMIT" 2>/dev/null || git -C "$REPO" rev-parse --short "$COMMIT")"
 [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]] || die "unexpected version string: $VERSION"
 [ -f "$CONFIG" ] || die "config not found: $CONFIG"
-# Versions before controller/ (v0.1.0) kept these scripts in orangepi/. Deploy one from a
-# checkout of that version, which its deploy.sh needs:
-#   git worktree add /tmp/wakeci-old v0.1.0 && /tmp/wakeci-old/orangepi/deploy.sh …
-git -C "$REPO" cat-file -e "$COMMIT:controller/install.sh" 2>/dev/null \
-  || die "$VERSION has no controller/install.sh (an older layout); deploy it with that version's own deploy.sh"
+# Releases before the WakeCI name (v0.1.0-v0.3.0) have another layout (a rackctl/ package,
+# and orangepi/ in v0.1.0). Deploy one from a checkout of that version, with its own script:
+#   git worktree add /tmp/old v0.3.0 && /tmp/old/controller/deploy.sh …
+for f in controller/install.sh wakeci/__main__.py; do
+  git -C "$REPO" cat-file -e "$COMMIT:$f" 2>/dev/null \
+    || die "$VERSION has no $f (a release before WakeCI); deploy it with that version's own deploy.sh"
+done
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
