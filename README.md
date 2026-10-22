@@ -340,6 +340,29 @@ saying so. The installer refuses when `core.hooksPath` is set: that directory is
 put the hook there yourself if you want it. Run the installer again after `scripts/pre-push`
 changes.
 
+## Releases
+
+A release is an annotated tag `vX.Y.Z` on `main`, matching `__version__` in
+`wakeci/__init__.py` and a `## [X.Y.Z]` section in `CHANGELOG.md`. Pushing the tag runs
+`.github/workflows/release.yml`, which:
+
+1. checks the version, the tag and the changelog (`scripts/release.py check`);
+2. runs the guard over the whole history, and the tests;
+3. builds the wheel and the sdist with build tools pinned by hash
+   (`requirements-release.txt`, no build isolation);
+4. installs the wheel and runs it;
+5. writes `SHA256SUMS`, attests the build provenance of each artifact, and publishes the
+   GitHub release with the changelog section as notes.
+
+Verify a downloaded artifact:
+
+```bash
+sha256sum -c SHA256SUMS
+gh attestation verify wakeci-X.Y.Z-py3-none-any.whl --repo badutis/wakeci
+```
+
+Running the workflow by hand rehearses steps 1-4 without publishing anything.
+
 ## Status
 
 Not yet deployed. Run it a week with `"dry_run": true` before turning that off.
