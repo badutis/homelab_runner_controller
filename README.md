@@ -18,6 +18,23 @@ or Raspberry Pi (512 MB RAM is plenty), or an x86 machine.
 How the decisions are made, the security model and the known limits are described in
 [`docs/design.md`](docs/design.md).
 
+## The `wakeci` command
+
+```text
+wakeci run CONFIG       run the controller (what the systemd unit starts)
+wakeci check CONFIG     check a configuration; exit 0 when it is valid
+wakeci version          print the version
+```
+
+`wakeci check` applies every rule the controller and the installer rely on, and refuses
+unknown keys, so a typo such as `idle_minute` is reported instead of ignored. Run it
+before every deploy; `deploy.sh` and `install.sh` run it too.
+
+Installed with `pip install .` (or `pipx install .`) the command is on your path, for
+checking configurations on your own computer. The package holds only the Python code: the
+controller host is set up with `controller/deploy.sh` and `controller/install.sh` (below),
+and its unit runs `python3 -m wakeci run /etc/wakeci/config.json`.
+
 ## Layout
 
 | Path | Runs on | What it does |
@@ -149,6 +166,16 @@ name changed with it. The new install does not touch the old one, so on the cont
 5. Monitoring: the metrics are now `wakeci_*`.
 
 ## Configuration
+
+Start from `controller/config.example.json`. Its first two keys are worth keeping:
+
+- `"$schema"` points editors such as VS Code to
+  [`docs/config.schema.json`](docs/config.schema.json), which gives completion and checks
+  while you type;
+- `"config_version": 1` is the format version. A future incompatible format raises it, and
+  WakeCI refuses a version it does not know instead of misreading the file. Without it
+  the file is read as version 1; `wakeci check`, the installer and the controller's log
+  warn about it.
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -22,9 +22,17 @@ from .notify import Notifier, Outbox, Sender, read_url
 log = logging.getLogger("wakeci")
 
 
+SUPPORTED_CONFIG_VERSIONS = (1,)
+
+
 def load_config(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
+    version = cfg.get("config_version", 1)
+    if type(version) is not int or version not in SUPPORTED_CONFIG_VERSIONS:
+        raise ValueError(
+            f"{path}: config_version {version!r} is not supported by this WakeCI "
+            f"(supported: {', '.join(map(str, SUPPORTED_CONFIG_VERSIONS))})")
     cfg.setdefault("dry_run", True)
     cfg.setdefault("poll_seconds", 20)
     cfg.setdefault("idle_minutes", 30)
@@ -51,13 +59,15 @@ def machines_from(cfg: dict) -> tuple:
 
 def read_version() -> str:
     """The release this copy was installed from (controller/install.sh writes VERSION next
-    to the package), or "unknown"."""
+    to the package, e.g. "v0.4.0"), else the package version."""
+    from . import __version__
+
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
     try:
         with open(path, encoding="utf-8") as f:
-            return f.read().strip() or "unknown"
+            return f.read().strip() or __version__
     except OSError:
-        return "unknown"
+        return __version__
 
 
 def notifications(cfg: dict, version: str) -> "tuple[Notifier, Optional[Sender]]":
@@ -361,9 +371,7 @@ def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
 
 
 def main(argv: List[str]) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    if len(argv) != 2:
-        print("usage: python3 -m wakeci /etc/wakeci/config.json", file=sys.stderr)
-        return 2
-    run(load_config(argv[1]))
-    return 0
+    """Kept for callers of the old entry point; the command line lives in cli.py."""
+    from .cli import main as cli_main
+
+    return cli_main(argv[1:])

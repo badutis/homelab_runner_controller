@@ -51,6 +51,9 @@ class CheckConfigTest(unittest.TestCase):
         cfg = changed(sources=lambda c: c["sources"][1].update(token_file=c["sources"][0]["token_file"]))
         self.assertEqual(run(cfg)[0], 0)
 
+    def test_a_mac_without_separators_is_accepted(self):
+        self.assertEqual(run(changed(machines=lambda c: c["machines"][0].update(mac="00005e005301")))[0], 0)
+
     def test_bad_configurations_are_refused(self):
         cases = {
             "not json": "{",
@@ -72,6 +75,17 @@ class CheckConfigTest(unittest.TestCase):
             "host starting with a dash": changed(machines=lambda c: c["machines"][0].update(host="-oProxyCommand=x")),
             "host with an IPv6 scope": changed(machines=lambda c: c["machines"][0].update(host="fe" + "80::1%$(reboot)")),
             "prefix not a string": changed(machines=lambda c: c["machines"][0].update(runner_prefixes=[1])),
+            "unknown top-level key": changed(idle_minute=30),
+            "config_version true": changed(config_version=True),
+            "config_version 1.0": changed(config_version=1.0),
+            "rank a fraction": changed(machines=lambda c: c["machines"][0].update(rank=1.7)),
+            "rank as text": changed(machines=lambda c: c["machines"][0].update(rank="1")),
+            "path with a newline": changed(ssh_key="/etc/wakeci/id_ed25519\n"),
+            "ssh_user with a newline": changed(machines=lambda c: c["machines"][0].update(ssh_user="wakeci\n")),
+            "repo with a newline": changed(sources=lambda c: c["sources"][0].update(repos=["o/r\n"])),
+            "unknown source key": changed(sources=lambda c: c["sources"][0].update(token="x")),
+            "unknown machine key": changed(machines=lambda c: c["machines"][0].update(ip="x")),
+            "machines not a list": changed(machines={"a": 1}),
             "notify not an object": changed(notify="yes"),
             "notify unknown key": changed(notify=lambda c: c["notify"].update(channel="x")),
             "notify url_file outside /etc/wakeci": changed(notify=lambda c: c["notify"].update(url_file="/tmp/u")),

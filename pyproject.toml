@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wakeci"
+dynamic = ["version"]
+description = "Wakes self-hosted GitHub Actions runner machines for queued jobs and suspends idle ones."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "badutis" }]
+keywords = ["github-actions", "self-hosted-runner", "wake-on-lan", "ci", "power-saving", "homelab"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: No Input/Output (Daemon)",
+  "Intended Audience :: System Administrators",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: System :: Power (UPS)",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/badutis/wakeci"
+Issues = "https://github.com/badutis/wakeci/issues"
+
+[project.scripts]
+wakeci = "wakeci.cli:main"
+
+[tool.setuptools]
+packages = ["wakeci"]
+
+[tool.setuptools.dynamic]
+version = { attr = "wakeci.__version__" }
