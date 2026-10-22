@@ -197,7 +197,7 @@ class Metrics:
             lines.append(f'rackctl_github_remaining{{source="{source}"}} {rem}')
         lines += ["# TYPE rackctl_dry_run gauge", f"rackctl_dry_run {int(dry_run)}"]
         lines += [
-            "# HELP rackctl_notify_failed_total Webhook messages that could not be sent.",
+            "# HELP rackctl_notify_failed_total Webhook messages whose post failed (retries not counted).",
             "# TYPE rackctl_notify_failed_total counter",
             f"rackctl_notify_failed_total {notify_failed}",
         ]
@@ -266,17 +266,21 @@ def run(cfg: dict) -> None:
     notifier, sender = notifications(cfg, version)
 
     outbox = Outbox()
+    notify_failed = 0
 
     def notify(msg) -> None:
         if sender is not None and msg is not None:
             outbox.queued(msg, sender.send(msg))
 
     def retry_undelivered(now: datetime) -> None:
+        nonlocal notify_failed
         if sender is None:
             return
         for seq, msg in sender.take_undelivered():
-            outbox.failed(msg, seq, now)
+            if outbox.failed(msg, seq, now):
+                notify_failed += 1
         for msg in outbox.due(now, notifier):
+            notifier.resent(msg.key, now)
             notify(msg)
 
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
@@ -342,7 +346,7 @@ def run(cfg: dict) -> None:
         except Exception:  # noqa: BLE001 — the loop never dies: next try after poll_seconds
             log.exception("loop error")
         try:
-            metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run, sender.failed if sender else 0)
+            metrics.update(ctl, counters, gh, busy_seconds, obs, dry_run, notify_failed)
         except Exception:  # noqa: BLE001
             log.exception("metrics error")
         time.sleep(cfg["poll_seconds"])

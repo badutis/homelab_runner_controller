@@ -32,6 +32,7 @@ log = logging.getLogger("rackctl")
 FORMATS = ("discord", "slack", "json")
 DISCORD_LIMIT = 2000  # characters in one Discord message
 RETRY_AFTER = timedelta(minutes=5)  # a message that could not be sent is tried again after this
+GIVE_UP_AFTER = timedelta(hours=24)  # ... until this long after its first failure
 LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
@@ -85,35 +86,75 @@ class Notifier:
         self.events[key] = now
         return Message(key, text)
 
+    def resent(self, key: str, now: datetime) -> None:
+        """A retry of ``key`` went out at ``now``: the next repeat counts from here, so a
+        retry that finally gets through is not followed at once by the regular repeat."""
+        p = self.problems.get(key)
+        if p is not None and p.last_sent is not None:
+            p.last_sent = now
+        if key in self.events:
+            self.events[key] = now
+
+    def reported(self, key: str) -> bool:
+        """The problem ``key`` is on and has been reported."""
+        p = self.problems.get(key)
+        return p is not None and p.last_sent is not None
+
 
 @dataclass
 class Outbox:
-    """Messages that were not delivered, sent again every ``delay`` until they are, unless
-    they went stale meanwhile: the problem ended (or, for a "resolved" message, came back),
-    or a newer message with the same key was queued. Pure logic, like ``Notifier``."""
+    """Messages that were not delivered, sent again every ``delay`` until they are (for at
+    most ``give_up``), unless they went stale meanwhile: the problem ended, a "resolved"
+    message's problem came back and was reported, or a newer message with the same key was
+    queued. A retry says when the message was first tried. Pure logic, like ``Notifier``."""
 
     delay: timedelta = RETRY_AFTER
+    give_up: timedelta = GIVE_UP_AFTER
     latest: Dict[str, int] = field(default_factory=dict)  # key -> sequence number last queued
-    pending: Dict[str, "tuple[Message, datetime]"] = field(default_factory=dict)
+    # key -> (original message, next try, first failure)
+    pending: Dict[str, "tuple[Message, datetime, datetime]"] = field(default_factory=dict)
+    # key -> (original message, first failure, the retry copy that was handed out)
+    retrying: Dict[str, "tuple[Message, datetime, Message]"] = field(default_factory=dict)
 
     def queued(self, msg: Message, seq: int) -> None:
         self.latest[msg.key] = seq
-        self.pending.pop(msg.key, None)  # the newer message replaces a waiting retry
+        self.pending.pop(msg.key, None)  # a newer message replaces a waiting retry
+        r = self.retrying.get(msg.key)
+        if r is not None and r[2] is not msg:
+            del self.retrying[msg.key]  # a new message, not our retry
 
-    def failed(self, msg: Message, seq: int, now: datetime) -> None:
-        if self.latest.get(msg.key) == seq:  # a failure of an older message is stale
-            self.pending[msg.key] = (msg, now + self.delay)
+    def failed(self, msg: Message, seq: int, now: datetime) -> bool:
+        """Note a failed post. True only for a message's first failure, so a caller can
+        count messages rather than attempts."""
+        if self.latest.get(msg.key) != seq:  # a failure of an older message is stale
+            return False
+        r = self.retrying.get(msg.key)
+        if r is not None and r[2] is msg:
+            self.pending[msg.key] = (r[0], now + self.delay, r[1])
+            return False
+        self.pending[msg.key] = (msg, now + self.delay, now)
+        return True
 
     def due(self, now: datetime, notifier: Notifier) -> List[Message]:
         out = []
-        for key, (msg, at) in list(self.pending.items()):
+        for key, (msg, at, first) in list(self.pending.items()):
             if at > now:
                 continue
             del self.pending[key]
-            active = key in notifier.problems
-            if (msg.problem and not active) or (msg.resolved and active):
+            if now - first >= self.give_up:
+                log.warning("notify %s: not delivered since %s; giving up", key, f"{first:%Y-%m-%d %H:%M} UTC")
                 continue
-            out.append(msg)
+            if msg.problem and key not in notifier.problems:
+                continue  # the problem ended
+            if msg.resolved and notifier.reported(key):
+                continue  # the problem came back, and that has been reported
+            if msg.resolved and key in notifier.problems:
+                self.pending[key] = (msg, now + self.delay, first)  # a short flap: wait it out
+                continue
+            copy = Message(key, f"{msg.text} (delayed: first tried {first:%Y-%m-%d %H:%M} UTC)",
+                           resolved=msg.resolved, problem=msg.problem)
+            self.retrying[key] = (msg, first, copy)
+            out.append(copy)
         return out
 
 

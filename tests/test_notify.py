@@ -62,50 +62,93 @@ class NotifierTest(unittest.TestCase):
 class OutboxTest(unittest.TestCase):
     def setUp(self):
         self.n = Notifier(after=0 * MIN, repeat=timedelta(hours=6))
-        self.box = Outbox(delay=5 * MIN)
+        self.box = Outbox(delay=5 * MIN, give_up=timedelta(hours=24))
+        self.seq = 0
 
-    def test_an_undelivered_message_comes_back_after_the_delay(self):
+    def send(self, msg):
+        self.seq += 1
+        self.box.queued(msg, self.seq)
+        return self.seq
+
+    def post_and_fail(self, msg, now):
+        seq = self.send(msg)
+        return self.box.failed(msg, seq, now)
+
+    def keys(self, msgs):
+        return [m.key for m in msgs]
+
+    def test_an_undelivered_message_comes_back_after_the_delay_saying_when_it_was_first_tried(self):
         msg = self.n.event("start", "started", T0)
-        self.box.queued(msg, 1)
-        self.box.failed(msg, 1, T0)
+        self.assertTrue(self.post_and_fail(msg, T0))
         self.assertEqual(self.box.due(T0 + 4 * MIN, self.n), [])
-        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [msg])
+        (retry,) = self.box.due(T0 + 5 * MIN, self.n)
+        self.assertEqual(retry.text, "started (delayed: first tried 2026-10-22 12:00 UTC)")
         self.assertEqual(self.box.due(T0 + 10 * MIN, self.n), [])  # handed out once per failure
 
-    def test_a_resolved_message_is_retried_unless_the_problem_came_back(self):
+    def test_a_retry_that_fails_again_keeps_the_first_time_and_is_not_counted_again(self):
+        msg = self.n.event("start", "started", T0)
+        self.post_and_fail(msg, T0)
+        (retry,) = self.box.due(T0 + 5 * MIN, self.n)
+        self.assertFalse(self.post_and_fail(retry, T0 + 5 * MIN))
+        (again,) = self.box.due(T0 + 10 * MIN, self.n)
+        self.assertEqual(again.text, "started (delayed: first tried 2026-10-22 12:00 UTC)")
+
+    def test_retries_stop_after_the_give_up_time(self):
+        msg = self.n.event("start", "started", T0)
+        self.post_and_fail(msg, T0)
+        now = T0
+        while True:
+            now += 5 * MIN
+            due = self.box.due(now, self.n)
+            if not due:
+                break
+            self.post_and_fail(due[0], now)
+        self.assertGreaterEqual(now - T0, timedelta(hours=24))
+        self.assertLess(now - T0, timedelta(hours=24, minutes=10))
+
+    def test_a_resolved_message_is_retried_unless_the_problem_came_back_and_was_reported(self):
         self.n.problem("source:a", "down", T0)
         ok = self.n.clear("source:a", "up", T0 + MIN)
-        self.box.queued(ok, 1)
-        self.box.failed(ok, 1, T0 + MIN)
-        self.assertEqual(self.box.due(T0 + 6 * MIN, self.n), [ok])
-        self.box.queued(ok, 2)
-        self.box.failed(ok, 2, T0 + 6 * MIN)
-        self.n.problem("source:a", "down again", T0 + 7 * MIN)
+        self.post_and_fail(ok, T0 + MIN)
+        (retry,) = self.box.due(T0 + 6 * MIN, self.n)
+        self.post_and_fail(retry, T0 + 6 * MIN)
+        self.n.problem("source:a", "down again", T0 + 7 * MIN)  # after=0: reported at once
         self.assertEqual(self.box.due(T0 + 11 * MIN, self.n), [])
+
+    def test_a_resolved_message_survives_a_short_unreported_flap(self):
+        n = Notifier(after=10 * MIN, repeat=timedelta(hours=6))
+        n.problem("source:a", "down", T0)
+        n.problem("source:a", "down", T0 + 10 * MIN)  # reported
+        ok = n.clear("source:a", "up", T0 + 11 * MIN)
+        self.post_and_fail(ok, T0 + 11 * MIN)
+        n.problem("source:a", "down", T0 + 15 * MIN)  # back, too short to report
+        self.assertEqual(self.box.due(T0 + 16 * MIN, n), [])  # waits
+        n.clear("source:a", "up", T0 + 18 * MIN)  # silent: the flap was never reported
+        self.assertEqual(self.keys(self.box.due(T0 + 21 * MIN, n)), ["source:a"])
 
     def test_a_problem_message_is_dropped_when_the_problem_ended(self):
         msg = self.n.problem("source:a", "down", T0)
-        self.box.queued(msg, 1)
-        self.box.failed(msg, 1, T0)
-        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [msg])
-        self.box.queued(msg, 2)
-        self.box.failed(msg, 2, T0 + 5 * MIN)
-        self.n.clear("source:a", "up", T0 + 6 * MIN)
-        self.assertEqual(self.box.due(T0 + 10 * MIN, self.n), [])
+        self.post_and_fail(msg, T0)
+        self.n.clear("source:a", "up", T0 + MIN)
+        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [])
 
     def test_a_late_failure_of_an_older_message_is_ignored(self):
         old, new = Message("k", "old"), Message("k", "new")
-        self.box.queued(old, 1)
-        self.box.queued(new, 2)  # sent before the failure of `old` was seen
-        self.box.failed(old, 1, T0)
+        seq_old = self.send(old)
+        self.send(new)  # sent before the failure of `old` was seen
+        self.assertFalse(self.box.failed(old, seq_old, T0))
         self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [])
 
     def test_a_newer_message_replaces_a_waiting_retry(self):
-        old, new = Message("k", "old"), Message("k", "new")
-        self.box.queued(old, 1)
-        self.box.failed(old, 1, T0)
-        self.box.queued(new, 2)
+        self.post_and_fail(Message("k", "old"), T0)
+        self.send(Message("k", "new"))
         self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [])
+
+    def test_a_delivered_retry_moves_the_repeat_clock(self):
+        n = Notifier(after=0 * MIN, repeat=timedelta(hours=6))
+        n.problem("limit", "x", T0, wait=False)
+        n.resent("limit", T0 + timedelta(hours=5, minutes=59))
+        self.assertIsNone(n.problem("limit", "x", T0 + timedelta(hours=6), wait=False))
 
 
 class PayloadTest(unittest.TestCase):
