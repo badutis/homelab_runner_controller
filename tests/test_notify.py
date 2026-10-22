@@ -6,8 +6,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from rackctl import main
-from rackctl.notify import Message, Notifier, Outbox, Sender, payload, read_url
+from wakeci import main
+from wakeci.notify import Message, Notifier, Outbox, Sender, payload, read_url
 
 T0 = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 MIN = timedelta(minutes=1)
@@ -219,18 +219,18 @@ class SenderTest(unittest.TestCase):
     def test_a_message_is_posted_as_json_with_a_user_agent(self):
         r = Receiver()
         self.addCleanup(r.close)
-        s = Sender(r.url, "discord", "rackctl/test")
+        s = Sender(r.url, "discord", "wakeci/test")
         s.send(Message("start", "hello"))
         s.close()
         self.assertEqual(r.bodies, [{"content": "hello", "allowed_mentions": {"parse": []}}])
-        self.assertEqual(r.headers[0]["User-Agent"], "rackctl/test")
+        self.assertEqual(r.headers[0]["User-Agent"], "wakeci/test")
         self.assertEqual(s.failed, 0)
 
     def test_an_error_answer_is_counted_and_the_url_is_never_logged(self):
         r = Receiver(status=500)
         self.addCleanup(r.close)
-        s = Sender(r.url, "json", "rackctl/test")
-        with self.assertLogs("rackctl", level="INFO") as logs:
+        s = Sender(r.url, "json", "wakeci/test")
+        with self.assertLogs("wakeci", level="INFO") as logs:
             s.send(Message("k", "x"))
             s.close()
         self.assertEqual(s.failed, 1)
@@ -265,8 +265,8 @@ class SenderTest(unittest.TestCase):
         r = Receiver()
         url = r.url
         r.close()  # nothing listens on that port any more
-        s = Sender(url, "json", "rackctl/test", timeout=2)
-        with self.assertLogs("rackctl", level="INFO") as logs:
+        s = Sender(url, "json", "wakeci/test", timeout=2)
+        with self.assertLogs("wakeci", level="INFO") as logs:
             s.send(Message("k", "x"))
             s.close()
         self.assertEqual(s.failed, 1)

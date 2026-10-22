@@ -16,7 +16,7 @@ Every `poll_seconds` the controller reads, for each source:
 - the runners: name, online, busy, labels;
 - the queued jobs of the source's repositories, with their labels.
 
-It passes this to `Controller.step` (`rackctl/decide.py`), which returns a list of
+It passes this to `Controller.step` (`wakeci/decide.py`), which returns a list of
 actions (`wake`, `sleep`, `alert`) and keeps the rest of its memory in RAM. Only two
 things go to disk: when each machine was last online, and until when a weekly wake holds
 it awake. After a restart everything else is learned again from GitHub.
@@ -59,7 +59,7 @@ A machine is suspended when **all** of these are true:
   so **nothing is suspended**. Waking still works.
 
 The controller then runs `ssh <ssh_user>@<host>`. The machine's `authorized_keys` forces
-the command, so the controller cannot choose what runs. `rack-sleep` checks again
+the command, so the controller cannot choose what runs. `wakeci-sleep` checks again
 whether a `Runner.Worker` process is running: **the machine decides, not the API**,
 because the API reports a busy runner late. Exit codes:
 
@@ -81,7 +81,7 @@ gets no work could therefore lose its registration. So every machine that has no
 online for 7 days is woken and held awake for 1 hour. A machine the state file knows
 nothing about (for example on the very first start) counts as not seen, so the first run
 wakes every sleeping machine once. Automatic OS updates can run during
-that hour. If one of them needs a reboot, `rack-sleep` reboots instead of suspending.
+that hour. If one of them needs a reboot, `wakeci-sleep` reboots instead of suspending.
 
 ## What the controller never does
 
@@ -124,15 +124,15 @@ before switching it off.
   GitHub's 24-hour limit). Nothing checks the controller automatically. Watch its
   metrics, or move the jobs off the self-hosted runners by hand.
 - **The window between the check and the suspend.** GitHub can hand a job to a runner in
-  the second between `rack-sleep`'s check and the suspend. That job is interrupted.
+  the second between `wakeci-sleep`'s check and the suspend. That job is interrupted.
   Stopping the runner services before suspending would close the window, at the cost
   of starting them again on resume.
 - **One unreadable source stops all suspending.** It is visible as
-  `rackctl_github_ok = 0`, as a warning in the log on every poll and, with `notify` set, as
+  `wakeci_github_ok = 0`, as a warning in the log on every poll and, with `notify` set, as
   a webhook message after `after_minutes`.
 - **One source's rate limit pauses both.** When a token is close to its limit, the loop
   waits for that token's reset before polling any source. Watch
-  `rackctl_github_remaining`.
+  `wakeci_github_remaining`.
 - **How long until GitHub marks a suspended machine's runners offline** is assumed to be
   under 5 minutes (`sleep_grace`). Measure it on your setup.
 - **Request cost.** Jobs of in-progress runs are re-read every 60 s (every 5 min when the

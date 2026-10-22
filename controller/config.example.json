@@ -4,11 +4,11 @@
   "idle_minutes": 30,
   "broadcast": "192.0.2.255",
   "metrics_listen": "0.0.0.0:9105",
-  "state_file": "/var/lib/rackctl/last-online.json",
-  "ssh_key": "/etc/rackctl/id_ed25519",
-  "known_hosts": "/etc/rackctl/known_hosts",
+  "state_file": "/var/lib/wakeci/last-online.json",
+  "ssh_key": "/etc/wakeci/id_ed25519",
+  "known_hosts": "/etc/wakeci/known_hosts",
   "notify": {
-    "url_file": "/etc/rackctl/notify-url",
+    "url_file": "/etc/wakeci/notify-url",
     "format": "discord",
     "after_minutes": 10,
     "repeat_hours": 6
@@ -19,7 +19,7 @@
       "repos": [
         "example-org/app"
       ],
-      "token_file": "/etc/rackctl/token-example-org"
+      "token_file": "/etc/wakeci/token-example-org"
     },
     {
       "runners_path": "orgs/example-org2",
@@ -27,7 +27,7 @@
         "example-org2/repo-a",
         "example-org2/repo-b"
       ],
-      "token_file": "/etc/rackctl/token-example-org2"
+      "token_file": "/etc/wakeci/token-example-org2"
     }
   ],
   "machines": [
@@ -35,7 +35,7 @@
       "name": "host1",
       "mac": "00:00:5e:00:53:01",
       "host": "192.0.2.11",
-      "ssh_user": "rackctl",
+      "ssh_user": "wakeci",
       "runner_prefixes": [
         "host1-a-",
         "host1-b-"
@@ -46,7 +46,7 @@
       "name": "host2",
       "mac": "00:00:5e:00:53:02",
       "host": "192.0.2.12",
-      "ssh_user": "rackctl",
+      "ssh_user": "wakeci",
       "runner_prefixes": [
         "host2-a-"
       ],
@@ -56,7 +56,7 @@
       "name": "host3",
       "mac": "00:00:5e:00:53:03",
       "host": "192.0.2.13",
-      "ssh_user": "rackctl",
+      "ssh_user": "wakeci",
       "runner_prefixes": [
         "host3-a-"
       ],

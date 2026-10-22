@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Deque, Dict, List, Optional
 
-log = logging.getLogger("rackctl")
+log = logging.getLogger("wakeci")
 
 FORMATS = ("discord", "slack", "json")
 DISCORD_LIMIT = 2000  # characters in one Discord message
@@ -205,7 +205,7 @@ class Sender:
         # (sequence number, message) of posts that were not delivered; the loop takes them.
         self._undelivered: Deque["tuple[int, Message]"] = collections.deque()
         self._seq = 0
-        self._thread = threading.Thread(target=self._run, name="rackctl-notify", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="wakeci-notify", daemon=True)
         self._thread.start()
 
     def send(self, msg: Message) -> int:

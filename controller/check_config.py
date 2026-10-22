@@ -2,21 +2,21 @@
 
     python3 controller/check_config.py CONFIG.json
 
-It loads the file the same way the controller does (``rackctl.main.load_config`` and
+It loads the file the same way the controller does (``wakeci.main.load_config`` and
 ``machines_from``) and checks the type and form of the settings, sources and machines
 (not every field: a machine's ``name`` and ``rank`` are taken as the controller reads them). Token
 files are not read: on a fresh controller they do not exist yet.
 
-The SSH key, ``known_hosts`` and every token file must sit directly in ``/etc/rackctl``:
+The SSH key, ``known_hosts`` and every token file must sit directly in ``/etc/wakeci``:
 the installer changes owners and modes of these files as root, so it must never be
 pointed at a file elsewhere.
 
 On success it prints one ``kind<TAB>value`` line per path the installer has to prepare:
 
-    ssh_key      /etc/rackctl/id_ed25519
-    known_hosts  /etc/rackctl/known_hosts
-    token        /etc/rackctl/token-example-org
-    token        /etc/rackctl/notify-url   (the webhook URL, when ``notify`` is set)
+    ssh_key      /etc/wakeci/id_ed25519
+    known_hosts  /etc/wakeci/known_hosts
+    token        /etc/wakeci/token-example-org
+    token        /etc/wakeci/notify-url   (the webhook URL, when ``notify`` is set)
     host         192.0.2.11
 
 On failure it prints the reason to stderr and exits with 1.
@@ -29,10 +29,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from rackctl import actions, main  # noqa: E402  (needs the path above)
-from rackctl.notify import FORMATS  # noqa: E402
+from wakeci import actions, main  # noqa: E402  (needs the path above)
+from wakeci.notify import FORMATS  # noqa: E402
 
-ETC = "/etc/rackctl"
+ETC = "/etc/wakeci"
 FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 HOST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 RUNNERS_PATH = re.compile(r"^(repos/[^/\s]+/[^/\s]+|orgs/[^/\s]+)$")
@@ -75,7 +75,7 @@ def check(path: str):
     if (
         used["ssh_key"] == used["known_hosts"]
         or used["known_hosts"] == used["ssh_key"] + ".pub"
-        or "/etc/rackctl/config.json" in used.values()
+        or "/etc/wakeci/config.json" in used.values()
     ):
         raise ValueError("ssh_key and known_hosts must be two files other than config.json")
     out.append(("ssh_key", used["ssh_key"]))

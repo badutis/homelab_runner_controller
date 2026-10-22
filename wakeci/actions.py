@@ -21,7 +21,7 @@ def wake(machine: Machine, broadcast: str = "255.255.255.255", port: int = 9) ->
         s.sendto(packet, (broadcast, port))
 
 
-# Exit codes of `rack-sleep` (machine/rack-sleep). It schedules the suspend a few seconds
+# Exit codes of `wakeci-sleep` (machine/wakeci-sleep). It schedules the suspend a few seconds
 # ahead and exits first, so the SSH session ends cleanly instead of being cut off.
 # A result that starts with one of SLEEP_OK means the machine is going down.
 SLEEP_OK = ("suspends", "reboots")
