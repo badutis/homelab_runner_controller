@@ -40,6 +40,7 @@ class Message:
     key: str  # e.g. "source:orgs/example-org2", "wake:host1"
     text: str
     resolved: bool = False
+    problem: bool = False  # about a problem that is still on (it may end before a retry)
 
 
 @dataclass
@@ -68,7 +69,7 @@ class Notifier:
         elif now - p.last_sent < self.repeat:
             return None
         p.last_sent = now
-        return Message(key, text)
+        return Message(key, text, problem=True)
 
     def clear(self, key: str, text: str, now: datetime) -> Optional[Message]:
         """The problem ``key`` is gone. A message only if it had been reported."""
@@ -84,15 +85,36 @@ class Notifier:
         self.events[key] = now
         return Message(key, text)
 
-    def not_delivered(self, key: str, now: datetime) -> None:
-        """The message for ``key`` was not delivered: try again after RETRY_AFTER instead of
-        waiting a whole ``repeat``. A problem that has ended meanwhile is not retried."""
-        retry_at = now - self.repeat + RETRY_AFTER
-        p = self.problems.get(key)
-        if p is not None and p.last_sent is not None:
-            p.last_sent = retry_at
-        elif key in self.events:
-            self.events[key] = retry_at
+
+@dataclass
+class Outbox:
+    """Messages that were not delivered, sent again every ``delay`` until they are, unless
+    they went stale meanwhile: the problem ended (or, for a "resolved" message, came back),
+    or a newer message with the same key was queued. Pure logic, like ``Notifier``."""
+
+    delay: timedelta = RETRY_AFTER
+    latest: Dict[str, int] = field(default_factory=dict)  # key -> sequence number last queued
+    pending: Dict[str, "tuple[Message, datetime]"] = field(default_factory=dict)
+
+    def queued(self, msg: Message, seq: int) -> None:
+        self.latest[msg.key] = seq
+        self.pending.pop(msg.key, None)  # the newer message replaces a waiting retry
+
+    def failed(self, msg: Message, seq: int, now: datetime) -> None:
+        if self.latest.get(msg.key) == seq:  # a failure of an older message is stale
+            self.pending[msg.key] = (msg, now + self.delay)
+
+    def due(self, now: datetime, notifier: Notifier) -> List[Message]:
+        out = []
+        for key, (msg, at) in list(self.pending.items()):
+            if at > now:
+                continue
+            del self.pending[key]
+            active = key in notifier.problems
+            if (msg.problem and not active) or (msg.resolved and active):
+                continue
+            out.append(msg)
+        return out
 
 
 def payload(fmt: str, msg: Message) -> dict:
@@ -137,32 +159,35 @@ class Sender:
         self._ua = user_agent
         self._open = opener
         self._timeout = timeout
-        self._queue: "queue.Queue[Optional[Message]]" = queue.Queue(maxsize=size)
+        self._queue: "queue.Queue[Optional[tuple[int, Message]]]" = queue.Queue(maxsize=size)
         self.failed = 0
-        # Keys of messages that were not delivered; the loop hands them back to the Notifier.
-        self._undelivered: Deque[str] = collections.deque()
+        # (sequence number, message) of posts that were not delivered; the loop takes them.
+        self._undelivered: Deque["tuple[int, Message]"] = collections.deque()
+        self._seq = 0
         self._thread = threading.Thread(target=self._run, name="rackctl-notify", daemon=True)
         self._thread.start()
 
-    def send(self, msg: Optional[Message]) -> None:
-        if msg is None:
-            return
+    def send(self, msg: Message) -> int:
+        """Queue ``msg``; returns its sequence number (see Outbox)."""
+        self._seq += 1
+        seq = self._seq
         log.info("notify %s: %s", msg.key, msg.text)
         try:
-            self._queue.put_nowait(msg)
+            self._queue.put_nowait((seq, msg))
         except queue.Full:
-            self._fail(msg, "queue full, message dropped")
+            self._fail(seq, msg, "queue full")
+        return seq
 
-    def take_undelivered(self) -> List[str]:
+    def take_undelivered(self) -> List["tuple[int, Message]"]:
         out = []
         while self._undelivered:
             out.append(self._undelivered.popleft())
         return out
 
-    def _fail(self, msg: Message, why: str) -> None:
+    def _fail(self, seq: int, msg: Message, why: str) -> None:
         self.failed += 1
-        self._undelivered.append(msg.key)
-        log.warning("notify %s: %s", msg.key, why)
+        self._undelivered.append((seq, msg))
+        log.warning("notify %s: %s; trying again later", msg.key, why)
 
     def close(self, wait: float = 5.0) -> None:
         """Stop after the queued messages are sent (for tests and a clean exit)."""
@@ -171,12 +196,12 @@ class Sender:
 
     def _run(self) -> None:
         while True:
-            msg = self._queue.get()
-            if msg is None:
+            item = self._queue.get()
+            if item is None:
                 return
-            self._post(msg)
+            self._post(*item)
 
-    def _post(self, msg: Message) -> None:
+    def _post(self, seq: int, msg: Message) -> None:
         body = json.dumps(payload(self._fmt, msg)).encode("utf-8")
         req = urllib.request.Request(self._url, data=body, method="POST")
         req.add_header("Content-Type", "application/json")
@@ -186,7 +211,7 @@ class Sender:
                 resp.read()
         except urllib.error.HTTPError as e:
             # 3xx (a redirect is refused, see _NoRedirect), 429 (rate limit), 5xx, ...
-            self._fail(msg, f"webhook answered HTTP {e.code}; trying again later")
+            self._fail(seq, msg, f"webhook answered HTTP {e.code}")
         except Exception as e:  # noqa: BLE001 — a broken webhook must never stop the controller
             # The exception text may contain the URL; only its type is logged.
-            self._fail(msg, f"post failed ({type(e).__name__}); trying again later")
+            self._fail(seq, msg, f"post failed ({type(e).__name__})")

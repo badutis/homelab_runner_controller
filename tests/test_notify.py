@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from rackctl import main
-from rackctl.notify import Message, Notifier, Sender, payload, read_url
+from rackctl.notify import Message, Notifier, Outbox, Sender, payload, read_url
 
 T0 = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 MIN = timedelta(minutes=1)
@@ -21,7 +21,7 @@ class NotifierTest(unittest.TestCase):
     def test_a_problem_is_reported_once_it_has_lasted_the_waiting_time(self):
         self.assertIsNone(self.n.problem("source:a", "down", T0))
         self.assertIsNone(self.n.problem("source:a", "down", T0 + 9 * MIN))
-        self.assertEqual(self.n.problem("source:a", "down", T0 + 10 * MIN), Message("source:a", "down"))
+        self.assertEqual(self.n.problem("source:a", "down", T0 + 10 * MIN), Message("source:a", "down", problem=True))
 
     def test_it_is_repeated_every_repeat_period_while_it_lasts(self):
         self.n.problem("k", "x", T0)
@@ -59,29 +59,53 @@ class NotifierTest(unittest.TestCase):
         self.assertIsNotNone(self.n.event("wake:host1", "x", T0 + timedelta(hours=6)))
 
 
-class RetryTest(unittest.TestCase):
+class OutboxTest(unittest.TestCase):
     def setUp(self):
-        self.n = Notifier(after=10 * MIN, repeat=timedelta(hours=6))
+        self.n = Notifier(after=0 * MIN, repeat=timedelta(hours=6))
+        self.box = Outbox(delay=5 * MIN)
 
-    def test_an_undelivered_problem_is_tried_again_after_five_minutes(self):
-        self.n.problem("k", "x", T0)
-        self.assertIsNotNone(self.n.problem("k", "x", T0 + 10 * MIN))
-        self.n.not_delivered("k", T0 + 10 * MIN)
-        self.assertIsNone(self.n.problem("k", "x", T0 + 14 * MIN))
-        self.assertIsNotNone(self.n.problem("k", "x", T0 + 15 * MIN))
+    def test_an_undelivered_message_comes_back_after_the_delay(self):
+        msg = self.n.event("start", "started", T0)
+        self.box.queued(msg, 1)
+        self.box.failed(msg, 1, T0)
+        self.assertEqual(self.box.due(T0 + 4 * MIN, self.n), [])
+        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [msg])
+        self.assertEqual(self.box.due(T0 + 10 * MIN, self.n), [])  # handed out once per failure
 
-    def test_an_undelivered_event_is_tried_again_after_five_minutes(self):
-        self.n.event("wake:host1", "x", T0)
-        self.n.not_delivered("wake:host1", T0)
-        self.assertIsNone(self.n.event("wake:host1", "x", T0 + 4 * MIN))
-        self.assertIsNotNone(self.n.event("wake:host1", "x", T0 + 5 * MIN))
+    def test_a_resolved_message_is_retried_unless_the_problem_came_back(self):
+        self.n.problem("source:a", "down", T0)
+        ok = self.n.clear("source:a", "up", T0 + MIN)
+        self.box.queued(ok, 1)
+        self.box.failed(ok, 1, T0 + MIN)
+        self.assertEqual(self.box.due(T0 + 6 * MIN, self.n), [ok])
+        self.box.queued(ok, 2)
+        self.box.failed(ok, 2, T0 + 6 * MIN)
+        self.n.problem("source:a", "down again", T0 + 7 * MIN)
+        self.assertEqual(self.box.due(T0 + 11 * MIN, self.n), [])
 
-    def test_a_problem_that_ended_meanwhile_is_not_retried(self):
-        self.n.problem("k", "x", T0)
-        self.n.problem("k", "x", T0 + 10 * MIN)
-        self.n.clear("k", "ok", T0 + 11 * MIN)
-        self.n.not_delivered("k", T0 + 11 * MIN)  # the late failure report of the first message
-        self.assertEqual(self.n.problems, {})
+    def test_a_problem_message_is_dropped_when_the_problem_ended(self):
+        msg = self.n.problem("source:a", "down", T0)
+        self.box.queued(msg, 1)
+        self.box.failed(msg, 1, T0)
+        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [msg])
+        self.box.queued(msg, 2)
+        self.box.failed(msg, 2, T0 + 5 * MIN)
+        self.n.clear("source:a", "up", T0 + 6 * MIN)
+        self.assertEqual(self.box.due(T0 + 10 * MIN, self.n), [])
+
+    def test_a_late_failure_of_an_older_message_is_ignored(self):
+        old, new = Message("k", "old"), Message("k", "new")
+        self.box.queued(old, 1)
+        self.box.queued(new, 2)  # sent before the failure of `old` was seen
+        self.box.failed(old, 1, T0)
+        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [])
+
+    def test_a_newer_message_replaces_a_waiting_retry(self):
+        old, new = Message("k", "old"), Message("k", "new")
+        self.box.queued(old, 1)
+        self.box.failed(old, 1, T0)
+        self.box.queued(new, 2)
+        self.assertEqual(self.box.due(T0 + 5 * MIN, self.n), [])
 
 
 class PayloadTest(unittest.TestCase):
@@ -167,7 +191,7 @@ class SenderTest(unittest.TestCase):
             s.send(Message("k", "x"))
             s.close()
         self.assertEqual(s.failed, 1)
-        self.assertEqual(s.take_undelivered(), ["k"])  # handed back for a retry, once
+        self.assertEqual([m.key for _, m in s.take_undelivered()], ["k"])  # handed back once
         self.assertEqual(s.take_undelivered(), [])
         self.assertNotIn(SECRET_URL_PART, "\n".join(logs.output))
 
@@ -192,7 +216,7 @@ class SenderTest(unittest.TestCase):
         s = Sender(f"http://127.0.0.1:{server.server_port}/hook", "discord", "ua")
         s.send(Message("k", "x"))
         s.close()
-        self.assertEqual((s.failed, s.take_undelivered()), (1, ["k"]))
+        self.assertEqual((s.failed, [m.key for _, m in s.take_undelivered()]), (1, ["k"]))
 
     def test_an_unreachable_webhook_is_counted_and_the_url_is_never_logged(self):
         r = Receiver()

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 from . import actions as act
 from .decide import Action, Controller, Machine, MachineState, Observation, Settings
 from .github import GitHub, Source, read_token
-from .notify import Notifier, Sender, read_url
+from .notify import Notifier, Outbox, Sender, read_url
 
 log = logging.getLogger("rackctl")
 
@@ -265,14 +265,19 @@ def run(cfg: dict) -> None:
     version = read_version()
     notifier, sender = notifications(cfg, version)
 
+    outbox = Outbox()
+
     def notify(msg) -> None:
-        if sender is not None:
-            sender.send(msg)
+        if sender is not None and msg is not None:
+            outbox.queued(msg, sender.send(msg))
 
     def retry_undelivered(now: datetime) -> None:
-        if sender is not None:
-            for key in sender.take_undelivered():
-                notifier.not_delivered(key, now)
+        if sender is None:
+            return
+        for seq, msg in sender.take_undelivered():
+            outbox.failed(msg, seq, now)
+        for msg in outbox.due(now, notifier):
+            notify(msg)
 
     log.info("started %s: %d machines, dry_run=%s", version, len(machines), dry_run)
     notify(notifier.event(
