@@ -22,9 +22,9 @@ while read -r local_ref local_sha _remote_ref _remote_sha; do
   case "$rc" in
     0) ;;
     1) echo "pre-push: $local_ref ($local_sha) holds the findings above; push refused" >&2; failed=1 ;;
-    *) echo "pre-push: the guard on this branch could not check $local_ref (exit $rc; an older" \
-            "scripts/public_safe.py without --rev, or a git error above); push refused." \
-            "Check out a branch with the current guard, or update this one." >&2
+    *) echo "pre-push: the guard could not check $local_ref (exit $rc: see the error above;" \
+            "on a branch with an older scripts/public_safe.py, update it or check out one with" \
+            "the current guard); push refused." >&2
        failed=1 ;;
   esac
 done

@@ -140,67 +140,76 @@ def index_files() -> Iterable[Tuple[str, str]]:
             yield path, text
 
 
-def object_types(shas: List[str]) -> dict:
-    """sha -> object type, for many objects in one git call."""
+def read_objects(shas: List[str]) -> Iterator[Tuple[str, str, bytes]]:
+    """(sha, type, content) for many objects in one ``git cat-file --batch`` call."""
     if not shas:
-        return {}
+        return
     out = subprocess.run(
-        ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-        input="\n".join(shas).encode() + b"\n", check=True, capture_output=True,
-    ).stdout.decode(errors="replace")
-    return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
-
-
-def history_blobs(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    """Every blob reachable from ``rev``. A blob with no path is one a tag points at
-    directly; it is scanned too."""
-    listed = []
-    for line in git("rev-list", "--objects", rev, "--").decode(errors="replace").splitlines():
-        sha, _, path = line.partition(" ")
-        if path not in SELF:
-            listed.append((sha, path))
-    types = object_types(sorted({sha for sha, _ in listed}))
-    seen = set()
-    for sha, path in listed:
-        if sha in seen or types.get(sha) != "blob":
+        ["git", "cat-file", "--batch"], input="\n".join(shas).encode() + b"\n",
+        check=True, capture_output=True,
+    ).stdout
+    pos = 0
+    while pos < len(out):
+        nl = out.index(b"\n", pos)
+        header = out[pos:nl].decode(errors="replace").split()
+        pos = nl + 1
+        if len(header) < 3:  # "<sha> missing"
             continue
-        seen.add(sha)
-        text = decode(git("cat-file", "blob", sha))
-        if text is not None:
-            yield f"{path or '(blob)'}@{sha[:7]}", text
+        size = int(header[2])
+        yield header[0], header[1], out[pos : pos + size]
+        pos += size + 1  # the content is followed by a newline
 
 
-def commits(rev: str = "HEAD") -> Iterable[Tuple[str, str]]:
-    """Every commit reachable from ``rev``, read raw: author and committer (names and
-    emails) and the message, whatever characters the message holds."""
-    for sha in git("rev-list", rev, "--").decode(errors="replace").split():
-        yield f"commit {sha[:7]}", git("cat-file", "commit", sha).decode(errors="replace")
+def history(revs: List[str]) -> Iterable[Tuple[str, str]]:
+    """Every blob and every commit reachable from ``revs`` (commits read raw: author and
+    committer names and emails, and the message, whatever characters it holds). A blob
+    with no path is one a tag points at directly; it is scanned too."""
+    paths = {}
+    for line in git("rev-list", "--objects", *revs, "--").decode(errors="replace").splitlines():
+        sha, _, path = line.partition(" ")
+        paths.setdefault(sha, path)
+    for sha, kind, raw in read_objects(sorted(paths)):
+        path = paths[sha]
+        if kind == "blob" and path not in SELF:
+            text = decode(raw)
+            if text is not None:
+                yield f"{path or '(blob)'}@{sha[:7]}", text
+        elif kind == "commit":
+            yield f"commit {sha[:7]}", raw.decode(errors="replace")
 
 
-def tag_chain(sha: str) -> Iterable[Tuple[str, str]]:
+def tag_chain(sha: str, seen: set, limit: Optional[int] = None) -> Iterable[Tuple[str, str]]:
     """Every tag object from ``sha`` down to what it finally points at (tags can be nested).
-    The raw object holds the tag name, the tagger and the message."""
-    for _ in range(100):
-        if git("cat-file", "-t", sha).strip() != b"tag":
+    The raw object holds the tag name, the tagger and the message. Objects in ``seen`` are
+    not read again. With ``limit``, a longer chain is an error rather than a silent stop."""
+    depth = 0
+    while sha not in seen:
+        seen.add(sha)
+        kind, raw = next(((k, r) for _, k, r in read_objects([sha])), ("missing", b""))
+        if kind != "tag":
             return
-        raw = git("cat-file", "tag", sha).decode(errors="replace")
-        yield f"tag object {sha[:7]}", raw
-        target = re.search(r"^object ([0-9a-f]+)$", raw, re.M)
+        depth += 1
+        if limit is not None and depth > limit:
+            raise RuntimeError(f"tag chain longer than {limit} objects at {sha[:7]}")
+        text = raw.decode(errors="replace")
+        yield f"tag object {sha[:7]}", text
+        target = re.search(r"^object ([0-9a-f]+)$", text, re.M)
         if not target:
             return
         sha = target.group(1)
-    # Refuse rather than leave the inner tags unread.
-    raise RuntimeError(f"tag chain longer than 100 objects at {sha[:7]}")
 
 
-def tags() -> Iterable[Tuple[str, str]]:
-    """Every local tag: its tag objects and the history it points at."""
-    for line in git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace").splitlines():
-        sha, _, name = line.partition(" ")
-        for where, text in tag_chain(sha):
+def tag_refs() -> List[Tuple[str, str]]:
+    out = git("for-each-ref", "refs/tags", "--format=%(objectname) %(refname:short)").decode(errors="replace")
+    return [tuple(line.split(" ", 1)) for line in out.splitlines() if " " in line]
+
+
+def tags(refs: List[Tuple[str, str]]) -> Iterable[Tuple[str, str]]:
+    """The tag objects of every local tag, nested ones included, each read once."""
+    seen: set = set()
+    for sha, name in refs:
+        for where, text in tag_chain(sha, seen):
             yield f"{where} ({name})", text
-        yield from history_blobs(sha)
-        yield from commits(sha)
 
 
 def main(argv=None) -> int:
@@ -223,9 +232,10 @@ def main(argv=None) -> int:
                 found += scan_lines(where, text)
         if args.history:
             if args.rev:
-                sources = (tag_chain(args.rev), history_blobs(args.rev), commits(args.rev))
+                sources = (tag_chain(args.rev, set(), limit=100), history([args.rev]))
             else:
-                sources = (history_blobs("HEAD"), commits("HEAD"), tags())
+                refs = tag_refs()
+                sources = (history(["HEAD"] + [sha for sha, _ in refs]), tags(refs))
             for source in sources:
                 for where, text in source:
                     found += scan_lines(where, text)

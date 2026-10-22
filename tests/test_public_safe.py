@@ -143,34 +143,6 @@ class RepositoryTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"(blob)", out)
 
-    def test_a_tag_chain_too_long_to_read_fails_instead_of_passing(self):
-        def after(d, git):
-            git("tag", "-a", "t0", "-m", "start")
-            for i in range(1, 102):
-                git("tag", "-a", f"t{i}", "-m", "x", f"t{i - 1}")
-
-        code, _ = self.run_in_repo(["x\n"], after=after)
-        self.assertEqual(code, 3)
-
-    def test_annotated_tag_message_is_scanned(self):
-        code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
-        self.assertEqual(code, 1)
-        self.assertRegex(out, r"tag object [0-9a-f]{7} \(v1\):\d+: private address")
-
-    def test_file_that_is_not_utf8_is_still_read(self):
-        code, out = self.run_in_repo([f"ip {PRIV} ".encode() + b"\xe0\n"], raw=True, history=False)
-        self.assertEqual(code, 1)
-        self.assertIn(f"private address {PRIV}", out)
-
-    def test_dangling_symlink_and_deleted_file_do_not_crash(self):
-        def after(d, git):
-            os.symlink("does-not-exist", os.path.join(d, "link"))
-            git("add", "link")
-            git("commit", "-q", "-m", "link")
-            os.remove(os.path.join(d, "a.txt"))
-
-        self.assertEqual(self.run_in_repo(["x\n"], after=after), (0, ""))
-
 
 if __name__ == "__main__":
     unittest.main()

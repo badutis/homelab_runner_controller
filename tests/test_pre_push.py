@@ -119,6 +119,30 @@ class PrePushHookTest(unittest.TestCase):
         self.assertIn(f"private address {PRIV}", out.stderr)
         self.assertIsNone(self.remote_sha("refs/tags/blobtag"))
 
+    def chain(self, depth, leak=False):
+        """A chain of `depth` nested annotated tags; only the outermost keeps a ref."""
+        self.git("tag", "-a", "c1", "-m", f"host {PRIV}" if leak else "start")
+        for i in range(2, depth + 1):
+            self.git("tag", "-a", f"c{i}", "-m", "x", f"c{i - 1}")
+            self.git("tag", "-d", f"c{i - 1}")
+        return f"c{depth}"
+
+    def test_a_chain_of_exactly_one_hundred_tags_is_read_in_full(self):
+        out = self.push(self.chain(100))
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_a_leak_at_the_bottom_of_a_long_chain_is_refused(self):
+        out = self.push(self.chain(100, leak=True))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn(f"private address {PRIV}", out.stderr)
+
+    def test_a_chain_too_long_to_read_is_refused_not_passed(self):
+        tag = self.chain(101)
+        out = self.push(tag)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("could not check", out.stderr)
+        self.assertIsNone(self.remote_sha(f"refs/tags/{tag}"))
+
     def test_a_local_tag_that_is_not_pushed_does_not_block_a_clean_push(self):
         branch = self.git("branch", "--show-current")
         self.git("tag", "-a", "private-note", "-m", f"host {PRIV}")
