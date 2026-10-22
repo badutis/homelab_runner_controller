@@ -194,7 +194,7 @@ class RepositoryTest(unittest.TestCase):
 
         code, out = self.run_in_repo(["x\n"], after=after)
         self.assertEqual(code, 1)
-        self.assertIn(f"(blob)", out)
+        self.assertIn("(blob)", out)
 
     def test_annotated_tag_message_is_scanned(self):
         code, out = self.run_in_repo(["x\n"], tag_message=f"release, host {PRIV}")
@@ -249,7 +249,7 @@ class RepositoryTest(unittest.TestCase):
     def test_content_at_the_guard_path_and_elsewhere_is_found(self):
         for tag_only in (False, True):
             code, out = self.run_in_repo(
-                ["x\n"], after=lambda d, git: self.leak_also_at_the_guard_path(d, git, tag_only)
+                ["x\n"], after=lambda d, git, tag_only=tag_only: self.leak_also_at_the_guard_path(d, git, tag_only)
             )
             self.assertEqual(code, 1, tag_only)
             self.assertIn(f"private address {PRIV}", out, tag_only)

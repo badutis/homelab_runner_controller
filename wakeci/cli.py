@@ -12,7 +12,7 @@ import argparse
 import logging
 import os
 import sys
-from typing import List, Optional
+from typing import Optional
 
 from . import __version__, config_check
 
@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _check(path: str, paths: bool) -> int:
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         lines = config_check.check(path, warnings)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
@@ -54,7 +54,7 @@ def _check(path: str, paths: bool) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     # The form before subcommands: `python3 -m wakeci CONFIG`. Only a word that looks like a
     # path is taken as one, so a misspelt command still gets argparse's "invalid choice".

@@ -2,7 +2,7 @@
 
 import socket
 import subprocess
-from typing import Callable, List
+from typing import Callable
 
 from .decide import Machine
 
@@ -32,7 +32,7 @@ SLEEP_EXIT = {
 }
 
 
-def ssh_sleep_command(machine: Machine, key_path: str, known_hosts: str) -> List[str]:
+def ssh_sleep_command(machine: Machine, key_path: str, known_hosts: str) -> list[str]:
     # The machine's authorized_keys restricts this key to one command (`command=`), so no
     # command is passed here: the machine decides what runs, not the controller.
     return [

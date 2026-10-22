@@ -314,7 +314,7 @@ class MetricsTest(unittest.TestCase):
         )
         m = main.Metrics()
         m.update(Controller(machines=()), {}, G(), {}, obs, True)
-        line = [l for l in m.text.splitlines() if l.startswith("wakeci_queued_oldest_seconds")]
+        line = [x for x in m.text.splitlines() if x.startswith("wakeci_queued_oldest_seconds")]
         self.assertEqual(len(line), 1)
         self.assertTrue(415 <= float(line[0].split()[-1]) <= 425, line)
         self.assertIn('wakeci_queued_jobs{labels="large,pool"} 3', m.text)
@@ -329,7 +329,7 @@ class MetricsTest(unittest.TestCase):
 
         m = main.Metrics()
         m.update(Controller(machines=()), {}, G(), {}, Observation(runners=(), queued=()), True)
-        types = [l.split()[2:4] for l in m.text.splitlines() if l.startswith("# TYPE ")]
+        types = [x.split()[2:4] for x in m.text.splitlines() if x.startswith("# TYPE ")]
         self.assertEqual(
             types,
             [

@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from wakeci.decide import Controller, Machine, Observation, QueuedJob, Runner, Settings
+from wakeci.decide import Controller, Machine, Observation, QueuedJob, Runner
 
 T0 = datetime(2026, 10, 17, 12, 0, 0)
 MIN = timedelta(minutes=1)

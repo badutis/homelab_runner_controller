@@ -7,12 +7,11 @@ out the actions. While `dry_run` is `true` (the default), actions are only logge
 import json
 import logging
 import os
-import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List, Optional
+from typing import Optional
 
 from . import actions as act
 from .decide import Action, Controller, Machine, MachineState, Observation, Settings
@@ -83,7 +82,7 @@ def notifications(cfg: dict, version: str) -> "tuple[Notifier, Optional[Sender]]
     return notifier, Sender(read_url(n["url_file"]), n["format"], f"wakeci/{version}")
 
 
-def sources_from(cfg: dict) -> List[Source]:
+def sources_from(cfg: dict) -> list[Source]:
     return [
         Source(runners_path=s["runners_path"], repos=tuple(s["repos"]), token=read_token(s["token_file"]))
         for s in cfg["sources"]
@@ -108,7 +107,7 @@ def _aware(value: object) -> Optional[datetime]:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
-def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
+def load_state(path: str) -> dict[str, dict[str, datetime]]:
     """A damaged or foreign file counts the same as no file."""
     try:
         with open(path, encoding="utf-8") as f:
@@ -117,7 +116,7 @@ def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
         return {}
     if not isinstance(raw, dict):
         return {}
-    out: Dict[str, Dict[str, datetime]] = {}
+    out: dict[str, dict[str, datetime]] = {}
     for name, fields in raw.items():
         if not isinstance(fields, dict):
             continue
@@ -126,8 +125,8 @@ def load_state(path: str) -> Dict[str, Dict[str, datetime]]:
     return out
 
 
-def snapshot(state: Dict[str, MachineState]) -> Dict[str, Dict[str, str]]:
-    out: Dict[str, Dict[str, str]] = {}
+def snapshot(state: dict[str, MachineState]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
     for name, s in state.items():
         fields = {k: getattr(s, k).isoformat() for k in PERSISTED if getattr(s, k) is not None}
         if fields:
@@ -135,7 +134,7 @@ def snapshot(state: Dict[str, MachineState]) -> Dict[str, Dict[str, str]]:
     return out
 
 
-def save_state(path: str, data: Dict[str, Dict[str, str]]) -> None:
+def save_state(path: str, data: dict[str, dict[str, str]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -154,9 +153,9 @@ class Metrics:
     def update(
         self,
         ctl: Controller,
-        counters: Dict[str, int],
+        counters: dict[str, int],
         gh: "GitHub",
-        busy_seconds: Dict[str, float],
+        busy_seconds: dict[str, float],
         obs: Optional[Observation],
         dry_run: bool,
         notify_failed: int = 0,
@@ -181,7 +180,7 @@ class Metrics:
         for name, secs in sorted(busy_seconds.items()):
             lines.append(f'wakeci_runner_busy_seconds_total{{runner="{name}"}} {secs:.0f}')
         lines += ["# TYPE wakeci_queued_jobs gauge"]
-        queued: Dict[str, int] = {}
+        queued: dict[str, int] = {}
         for job in obs.queued if obs else ():
             key = ",".join(sorted(job.labels - {"self-hosted"}))
             queued[key] = queued.get(key, 0) + 1
@@ -190,7 +189,7 @@ class Metrics:
         # How long the oldest queued job has waited: the queue length is not enough for a
         # "waiting too long" alert, because a queue that keeps moving is not empty either.
         lines += ["# TYPE wakeci_queued_oldest_seconds gauge"]
-        oldest: Dict[str, float] = {}
+        oldest: dict[str, float] = {}
         now = datetime.now(timezone.utc)
         for job in obs.queued if obs else ():
             if job.since is None:
@@ -242,7 +241,7 @@ class Metrics:
 # --- ciklas ------------------------------------------------------------------------------
 
 
-def execute(a: Action, by_name: Dict[str, Machine], cfg: dict) -> str:
+def execute(a: Action, by_name: dict[str, Machine], cfg: dict) -> str:
     m = by_name[a.machine]
     if a.kind == "wake":
         act.wake(m, cfg["broadcast"])
@@ -268,8 +267,8 @@ def run(cfg: dict) -> None:
     gh = GitHub(sources_from(cfg))
     metrics = Metrics()
     metrics.serve(cfg["metrics_listen"])
-    counters: Dict[str, int] = {}
-    busy_seconds: Dict[str, float] = {}
+    counters: dict[str, int] = {}
+    busy_seconds: dict[str, float] = {}
     saved = snapshot(ctl.state)
     last_poll: Optional[datetime] = None
     obs: Optional[Observation] = None
@@ -382,15 +381,15 @@ def run(cfg: dict) -> None:
         time.sleep(cfg["poll_seconds"])
 
 
-def _days(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+def _days(data: dict[str, dict[str, str]]) -> dict[str, str]:
     return {k: v.get("last_online", "")[:10] for k, v in data.items()}
 
 
-def _holds(data: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+def _holds(data: dict[str, dict[str, str]]) -> dict[str, str]:
     return {k: v.get("hold_until", "") for k, v in data.items()}
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     """Kept for callers of the old entry point; the command line lives in cli.py."""
     from .cli import main as cli_main
 

@@ -37,7 +37,7 @@ class CheckConfigTest(unittest.TestCase):
     def test_example_passes_and_lists_every_path(self):
         code, out, _ = run(EXAMPLE)
         self.assertEqual(code, 0)
-        lines = [l.split("\t") for l in out.splitlines()]
+        lines = [line.split("\t") for line in out.splitlines()]
         self.assertEqual([k for k, _ in lines].count("token"), 3)  # two sources and the webhook URL
         self.assertEqual([k for k, _ in lines].count("host"), 3)
         self.assertIn(["ssh_key", "/etc/wakeci/id_ed25519"], lines)

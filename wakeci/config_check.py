@@ -27,7 +27,6 @@ import json
 import os
 import re
 import sys
-from typing import List, Tuple
 
 from . import actions, main
 from .notify import FORMATS
@@ -79,7 +78,7 @@ def no_unknown_keys(where: str, obj, allowed: set) -> None:
         raise ValueError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
 
 
-def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str]]:
+def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str]]:
     """The paths to prepare, or ValueError. Notes that are not errors go to ``warnings``."""
     warnings = [] if warnings is None else warnings
     with open(path, encoding="utf-8") as f:
@@ -96,7 +95,7 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     try:
         ipaddress.IPv4Address(cfg["broadcast"])
     except (ValueError, TypeError):
-        raise ValueError("broadcast must be an IPv4 address")
+        raise ValueError("broadcast must be an IPv4 address") from None
     listen = cfg["metrics_listen"]
     host, _, port = listen.rpartition(":") if isinstance(listen, str) else ("", "", "")
     if not host or not port.isdigit() or not 0 < int(port) < 65536:
@@ -177,7 +176,7 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
         except ValueError:
             # Not starting with "-": the host is passed to ssh-keyscan and ssh.
             if not HOST_NAME.fullmatch(m.host):
-                raise ValueError(f"machine {m.name}: host must be an address or a host name")
+                raise ValueError(f"machine {m.name}: host must be an address or a host name") from None
         rank = next((x.get("rank", 1) for x in cfg["machines"] if x.get("name") == m.name), 1)
         if isinstance(rank, bool) or not isinstance(rank, int):
             raise ValueError(f"machine {m.name}: rank must be a whole number")
@@ -187,12 +186,12 @@ def check(path: str, warnings: "List[str] | None" = None) -> List[Tuple[str, str
     return out
 
 
-def paths_main(argv: List[str]) -> int:
+def paths_main(argv: list[str]) -> int:
     """``controller/check_config.py CONFIG``: the path list for the installer."""
     if len(argv) != 1:
         print("usage: check_config.py CONFIG.json", file=sys.stderr)
         return 2
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         lines = check(argv[0], warnings)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
