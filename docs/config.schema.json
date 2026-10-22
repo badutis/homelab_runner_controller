@@ -14,7 +14,7 @@
     "idle_minutes": {"type": "integer", "minimum": 1, "default": 30, "description": "Idle time of all runners of a machine before it is suspended."},
     "broadcast": {"type": "string", "default": "255.255.255.255", "description": "IPv4 broadcast address for Wake-on-LAN packets."},
     "metrics_listen": {"type": "string", "pattern": "^.+:[0-9]{1,5}$", "default": "0.0.0.0:9105", "description": "<address>:<port> of the /metrics endpoint; the port is 1-65535 (checked by wakeci check)."},
-    "state_file": {"type": "string", "pattern": "^/", "default": "/var/lib/wakeci/last-online.json"},
+    "state_file": {"type": "string", "pattern": "^/[^\\u0000-\\u001f\\u007f]*$", "default": "/var/lib/wakeci/last-online.json"},
     "ssh_key": {"$ref": "#/$defs/etcFile", "description": "Private key used for wakeci-sleep."},
     "known_hosts": {"$ref": "#/$defs/etcFile", "default": "/etc/wakeci/known_hosts"},
     "notify": {
@@ -50,11 +50,11 @@
         "additionalProperties": false,
         "required": ["name", "mac", "host", "runner_prefixes"],
         "properties": {
-          "name": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "Also the machine label in /metrics."},
           "mac": {"type": "string", "pattern": "^(([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{12})$"},
           "host": {"type": "string", "minLength": 1},
           "ssh_user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*$", "description": "Defaults to name."},
-          "runner_prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "runner_prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[^\\u0000-\\u001f\\u007f]+$"}},
           "rank": {"type": "integer", "default": 1, "description": "Lower is woken first."}
         }
       }

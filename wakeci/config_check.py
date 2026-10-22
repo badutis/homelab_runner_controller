@@ -53,6 +53,8 @@ NOTIFY_KEYS = {"url_file", "format", "after_minutes", "repeat_hours"}
 
 ETC = "/etc/wakeci"
 FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+MACHINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # it is a label value in /metrics
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 HOST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 RUNNERS_PATH = re.compile(r"^(repos/[^/\s]+/[^/\s]+|orgs/[^/\s]+)$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -100,7 +102,11 @@ def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str
     host, _, port = listen.rpartition(":") if isinstance(listen, str) else ("", "", "")
     if not host or not port.isdigit() or not 0 < int(port) < 65536:
         raise ValueError("metrics_listen must be <address>:<port>")
-    if not isinstance(cfg["state_file"], str) or not os.path.isabs(cfg["state_file"]):
+    if (
+        not isinstance(cfg["state_file"], str)
+        or not os.path.isabs(cfg["state_file"])
+        or CONTROL.search(cfg["state_file"])
+    ):
         raise ValueError("state_file must be an absolute path")
     used = {
         "ssh_key": in_etc("ssh_key", cfg.get("ssh_key")),
@@ -163,11 +169,16 @@ def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str
     if not machines:
         raise ValueError("machines must not be empty")
     names = [m.name for m in machines]
+    for name in names:
+        if not isinstance(name, str) or not MACHINE_NAME.fullmatch(name):
+            raise ValueError(f"machine name {name!r}: letters, digits, '.', '_' and '-' only")
     if len(set(names)) != len(names):
         raise ValueError("machine names must be unique")
     for m in machines:
         actions.magic_packet(m.mac)  # raises on a malformed MAC
-        if not m.runner_prefixes or not all(isinstance(p, str) and p for p in m.runner_prefixes):
+        if not m.runner_prefixes or not all(
+            isinstance(p, str) and p and not CONTROL.search(p) for p in m.runner_prefixes
+        ):
             raise ValueError(f"machine {m.name}: runner_prefixes must be non-empty strings")
         if not isinstance(m.host, str) or "%" in m.host:
             raise ValueError(f"machine {m.name}: host must be an address or a host name")

@@ -91,6 +91,12 @@ class CheckConfigTest(unittest.TestCase):
             "path with a newline": changed(ssh_key="/etc/wakeci/id_ed25519\n"),
             "ssh_user with a newline": changed(machines=lambda c: c["machines"][0].update(ssh_user="wakeci\n")),
             "repo with a newline": changed(sources=lambda c: c["sources"][0].update(repos=["o/r\n"])),
+            "state_file with a newline": changed(state_file="/var/lib/wakeci/s.json\n"),
+            "machine name with a newline": changed(machines=lambda c: c["machines"][0].update(name="host1\n")),
+            "machine name with a quote": changed(machines=lambda c: c["machines"][0].update(name='host"1')),
+            "prefix with a newline": changed(
+                machines=lambda c: c["machines"][0].update(runner_prefixes=["host1-a-\n"])
+            ),
             "unknown source key": changed(sources=lambda c: c["sources"][0].update(token="x")),
             "unknown machine key": changed(machines=lambda c: c["machines"][0].update(ip="x")),
             "machines not a list": changed(machines={"a": 1}),

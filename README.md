@@ -293,6 +293,15 @@ shellcheck machine/install.sh machine/wakeci-sleep controller/install.sh control
 python3 scripts/public_safe.py --history
 ```
 
+Lint, formatting, types and coverage use pinned tools (installed by hash, never a newer
+release by surprise):
+
+```bash
+python3 -m pip install --require-hashes --no-deps -r requirements-dev.txt
+ruff check . && ruff format --check . && mypy
+coverage run -m unittest discover -s tests -t . && coverage report
+```
+
 CI runs these on GitHub-hosted runners, and also `tests/install_smoke.sh` on x86_64 and on
 arm64. That script installs the controller from scratch on a clean Ubuntu with systemd and
 starts it with fake tokens. It changes the system, so never run it on a real host. CI never
