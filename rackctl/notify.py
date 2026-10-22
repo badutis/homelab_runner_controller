@@ -106,7 +106,7 @@ class Outbox:
     """Messages that were not delivered, sent again every ``delay`` until they are (for at
     most ``give_up``), unless they went stale meanwhile: the problem ended, a "resolved"
     message's problem came back and was reported, or a newer message with the same key was
-    queued. A retry says when the message was first tried. Pure logic, like ``Notifier``."""
+    queued. A retry says when the message first failed. Pure logic, like ``Notifier``."""
 
     delay: timedelta = RETRY_AFTER
     give_up: timedelta = GIVE_UP_AFTER
@@ -151,7 +151,7 @@ class Outbox:
             if msg.resolved and key in notifier.problems:
                 self.pending[key] = (msg, now + self.delay, first)  # a short flap: wait it out
                 continue
-            copy = Message(key, f"{msg.text} (delayed: first tried {first:%Y-%m-%d %H:%M} UTC)",
+            copy = Message(key, f"{msg.text} (delayed: first failed {first:%Y-%m-%d %H:%M} UTC)",
                            resolved=msg.resolved, problem=msg.problem)
             self.retrying[key] = (msg, first, copy)
             out.append(copy)

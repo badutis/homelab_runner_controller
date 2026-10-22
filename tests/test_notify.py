@@ -82,7 +82,7 @@ class OutboxTest(unittest.TestCase):
         self.assertTrue(self.post_and_fail(msg, T0))
         self.assertEqual(self.box.due(T0 + 4 * MIN, self.n), [])
         (retry,) = self.box.due(T0 + 5 * MIN, self.n)
-        self.assertEqual(retry.text, "started (delayed: first tried 2026-10-22 12:00 UTC)")
+        self.assertEqual(retry.text, "started (delayed: first failed 2026-10-22 12:00 UTC)")
         self.assertEqual(self.box.due(T0 + 10 * MIN, self.n), [])  # handed out once per failure
 
     def test_a_retry_that_fails_again_keeps_the_first_time_and_is_not_counted_again(self):
@@ -91,7 +91,7 @@ class OutboxTest(unittest.TestCase):
         (retry,) = self.box.due(T0 + 5 * MIN, self.n)
         self.assertFalse(self.post_and_fail(retry, T0 + 5 * MIN))
         (again,) = self.box.due(T0 + 10 * MIN, self.n)
-        self.assertEqual(again.text, "started (delayed: first tried 2026-10-22 12:00 UTC)")
+        self.assertEqual(again.text, "started (delayed: first failed 2026-10-22 12:00 UTC)")
 
     def test_retries_stop_after_the_give_up_time(self):
         msg = self.n.event("start", "started", T0)

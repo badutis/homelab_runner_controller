@@ -219,7 +219,7 @@ What is sent:
 Messages are posted from a separate thread. A slow or broken webhook never holds up the
 control loop. A post that fails (an error answer, a rate limit, a timeout) is logged
 without the URL, counted once in `rackctl_notify_failed_total` and sent again every 5
-minutes, for up to 24 hours, with the time it was first tried. A retry is dropped when it
+minutes, for up to 24 hours, with the time it first failed. A retry is dropped when it
 has gone stale: the problem ended, or for a "resolved" message the problem came back and was
 reported, or a newer message with the same subject was sent.
 A redirect counts as a failure, because following it would silently drop the message.
