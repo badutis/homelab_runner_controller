@@ -227,7 +227,8 @@ wakeci discover --update config.json \
 - `--update` **never changes or removes** anything in the file. Prefixes that no runner
   matches any more are only reported. Without `--write` the result goes to standard output
   and the diff to standard error; with `--write` the file is replaced (the old one is kept
-  as `config.json.bak`). The file is written back with two-space indentation.
+  as `config.json.bak`; a symbolic link is followed, and the mode and owner are kept).
+  The file is written back with two-space indentation, whatever its formatting was.
 - The token can also come from `WAKECI_TOKEN` when there is one source. `--json` prints
   the configuration and the report together.
 

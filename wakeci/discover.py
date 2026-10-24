@@ -16,6 +16,7 @@ With ``--update`` nothing in the file is changed or removed; machines are only a
 Only GET requests are made, and the token is never printed or written.
 """
 
+import contextlib
 import copy
 import dataclasses
 import difflib
@@ -134,9 +135,15 @@ def plan(cfg: dict, runners_by_source: dict, machine_args: dict) -> "tuple[dict,
             raise ValueError(f"machine {name} already exists: add the prefixes to its runner_prefixes by hand")
         if not config_check.MACHINE_NAME.fullmatch(name):
             raise ValueError(f"machine name {name!r}: letters, digits, '.', '_' and '-' only")
+        if not prefixes:
+            raise ValueError(f"--machine {name}: give at least one prefix")
         for p in prefixes:
             if not any(r["name"].startswith(p) for r in every):
                 raise ValueError(f"--machine {name}: no runner starts with {p!r}")
+            if any(p in m.get("runner_prefixes", []) for m in existing):
+                raise ValueError(f"--machine {name}: {p!r} is already a prefix of an existing machine")
+            if sum(p in ps for ps in machine_args.values()) > 1:
+                raise ValueError(f"--machine: {p!r} is given for more than one machine")
 
     groups: dict = {}
     for source, runners in runners_by_source.items():
@@ -216,6 +223,8 @@ def _pairs(values: Optional[list], option: str, form: str) -> dict:
         key, sep, rest = v.partition("=")
         if not sep or not key or not rest:
             raise UsageError(f"{option} takes {form}, not {v!r}")
+        if key in out:
+            raise UsageError(f"{option} {key} is given twice")
         out[key] = rest
     return out
 
@@ -303,14 +312,20 @@ def _print_report(report: Report, changed: bool, out) -> None:
 
 
 def _write(path: str, text: str) -> None:
-    """Replace the file in one step and keep the old one as PATH.bak."""
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".wakeci-", suffix=".tmp")
+    """Replace the file in one step and keep the old one as PATH.bak. A symbolic link is
+    followed: the file it points to is replaced, and the link stays."""
+    path = os.path.realpath(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".wakeci-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+        st = os.stat(path)
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        # Keeps the group the service reads it through, e.g. root:wakeci 0640.
+        with contextlib.suppress(PermissionError):
+            os.chown(tmp, st.st_uid, st.st_gid)
         shutil.copy2(path, path + ".bak")
         os.replace(tmp, path)
     except BaseException:
@@ -346,7 +361,7 @@ def run(ns) -> int:
             if " 401 " in f" {reason} ":
                 hint = ": the token is not valid or has expired"
             elif " 403 " in f" {reason} " or " 404 " in f" {reason} ":
-                hint = ": the token cannot read this source's self-hosted runners"
+                hint = ": the token cannot read this source's self-hosted runners, or its rate limit is used up"
             print(f"wakeci discover: {path}: {reason}{hint}", file=err)
             return 1
 
@@ -355,7 +370,10 @@ def run(ns) -> int:
     except ValueError as e:
         print(f"wakeci discover: {e}", file=err)
         return 2
-    changed = new != cfg
+    except (KeyError, TypeError, AttributeError):
+        print(f"wakeci discover: the machines in {ns.update} are malformed: run wakeci check on it", file=err)
+        return 1
+    changed = bool(report.added)
     out_text = json.dumps(new, indent=2, ensure_ascii=False) + "\n"
     _print_report(report, changed, err)
 
@@ -367,5 +385,6 @@ def run(ns) -> int:
     elif not ns.write:
         sys.stdout.write(out_text)
         if text is not None and changed:
-            err.writelines(difflib.unified_diff(text.splitlines(True), out_text.splitlines(True), ns.update, "new"))
+            old = [line.rstrip("\r\n") + "\n" for line in text.splitlines()]
+            err.writelines(difflib.unified_diff(old, out_text.splitlines(True), ns.update, "new"))
     return 0

@@ -3,6 +3,7 @@ import copy
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 import urllib.error
@@ -128,6 +129,22 @@ class PlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "machine name"):
             self.plan(cfg_with(HOST1), [runner("ci5-1")], {"a b": ["ci5-"]})
 
+    def test_machine_arguments_must_not_repeat_or_be_empty(self):
+        for machines, text in (
+            ({"runner5": []}, "at least one prefix"),
+            ({"runner5": ["ci5-"], "runner6": ["ci5-"]}, "more than one machine"),
+            ({"runner5": ["host1-a-"]}, "already a prefix of an existing machine"),
+        ):
+            with self.assertRaisesRegex(ValueError, text):
+                self.plan(cfg_with(HOST1), [runner("ci5-1"), runner("host1-a-1")], machines)
+
+    def test_a_file_without_machines_is_only_added_to(self):
+        cfg = cfg_with(HOST1)
+        del cfg["machines"]
+        new, report = self.plan(cfg, [runner("ci5-1")])
+        self.assertEqual(report.added, ["ci5"])
+        self.assertEqual({k: v for k, v in new.items() if k != "machines"}, cfg)
+
     def test_a_new_name_that_is_taken_gets_a_suffix(self):
         machine = dict(HOST1, name="ci5", runner_prefixes=["other-"])
         new, _ = self.plan(cfg_with(machine), [runner("other-1"), runner("ci5-1")])
@@ -200,11 +217,10 @@ class FakeRunners:
 
 def run(args, opener):
     out, err = io.StringIO(), io.StringIO()
-    with (
-        mock.patch.object(discover, "OPENER", opener),
-        contextlib.redirect_stdout(out),
-        contextlib.redirect_stderr(err),
-    ):
+    with contextlib.ExitStack() as stack:  # not one parenthesised `with`: that needs Python 3.10
+        stack.enter_context(mock.patch.object(discover, "OPENER", opener))
+        stack.enter_context(contextlib.redirect_stdout(out))
+        stack.enter_context(contextlib.redirect_stderr(err))
         try:
             code = cli.main(["discover", *args])
         except SystemExit as e:
@@ -259,6 +275,39 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("nothing to add", err)
         self.assertFalse(os.path.exists(self.config + ".bak"))
+
+    def test_write_follows_a_symbolic_link_and_keeps_mode_and_owner(self):
+        real = os.path.join(self.dir.name, "real.json")
+        os.replace(self.config, real)
+        os.chmod(real, 0o640)
+        os.symlink(real, self.config)
+        code, _, err = self.update("--write")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(os.path.islink(self.config))
+        self.assertEqual(json.loads(Path(real).read_text())["machines"][1]["name"], "ci5")
+        self.assertTrue(os.path.exists(real + ".bak"))
+        st = os.stat(real)
+        self.assertEqual((stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid), (0o640, os.getuid(), os.getgid()))
+
+    def test_a_file_without_a_final_newline_gives_a_clean_diff(self):
+        Path(self.config).write_text(Path(self.config).read_text().rstrip("\n"))
+        code, _, err = self.update()
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("}+", err)
+        self.assertTrue(err.endswith("   ]\n }\n"), err[-40:])
+
+    def test_malformed_machines_are_reported_not_a_traceback(self):
+        cfg = json.loads(Path(self.config).read_text())
+        cfg["machines"].append({"name": "broken"})
+        Path(self.config).write_text(json.dumps(cfg))
+        code, _, err = self.update()
+        self.assertEqual(code, 1)
+        self.assertIn("malformed: run wakeci check", err)
+
+    def test_a_repeated_machine_argument_is_refused(self):
+        code, _, err = self.update("--machine", "a=ci5-", "--machine", "a=ci6-")
+        self.assertEqual(code, 2)
+        self.assertIn("--machine a is given twice", err)
 
     def test_more_than_one_page_of_runners(self):
         self.github.by_path["repos/example-org/app"] = [runner(f"ci{i}-1") for i in range(150)]
