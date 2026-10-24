@@ -34,6 +34,7 @@ SUPPORTED = {
     "properties",
     "required",
     "additionalProperties",
+    "not",
 }
 
 
@@ -47,7 +48,7 @@ def keywords(schema):
             if key in ("properties", "$defs"):
                 for sub in value.values():
                     found |= keywords(sub)
-            elif isinstance(value, dict):
+            elif isinstance(value, dict):  # items, not, ...
                 found |= keywords(value)
     return found
 
@@ -67,6 +68,8 @@ def errors(value, schema, where="$"):
         ok = True
     if not ok:
         return [f"{where}: not {t}"]
+    if "not" in schema and not errors(value, schema["not"], where):
+        out.append(f"{where}: matches {schema['not']}, which is not allowed")
     if "enum" in schema and value not in schema["enum"]:
         out.append(f"{where}: not one of {schema['enum']}")
     # JSON Schema patterns are ECMA regexes, where "$" does not match before a trailing
@@ -112,6 +115,10 @@ class SchemaTest(unittest.TestCase):
         cfg["machines"][0]["mac"] = "00005e005301"
         self.assertEqual(errors(cfg, SCHEMA), [])
 
+    def test_the_schema_and_the_checker_agree_on_the_placeholder(self):
+        host = SCHEMA["properties"]["machines"]["items"]["properties"]["host"]
+        self.assertEqual(host["not"], {"pattern": config_check.PLACEHOLDER})
+
     def test_the_schema_uses_only_keywords_this_validator_checks(self):
         self.assertEqual(keywords(SCHEMA) - SUPPORTED, set())
 
@@ -143,6 +150,16 @@ class SchemaTest(unittest.TestCase):
             lambda c: c.update(state_file="/var/lib/wakeci/s.json\n"),
             lambda c: c["machines"][0].update(name='host"1'),
             lambda c: c["machines"][0].update(runner_prefixes=["a\n"]),
+            lambda c: c["machines"][0].update(host="FILL-IN"),
+            lambda c: c["machines"][0].update(mac="FILL-IN"),
+            lambda c: c["machines"][0].update(ssh_user="FILL-IN"),
+            lambda c: c["machines"][0].update(name="FILL-IN"),
+            lambda c: c["machines"][0].update(runner_prefixes=["FILL-IN"]),
+            lambda c: c["sources"][0].update(repos=["example-org/FILL-IN"]),
+            lambda c: c["sources"][0].update(token_file="/etc/wakeci/FILL-IN"),
+            lambda c: c["notify"].update(url_file="/etc/wakeci/FILL-IN"),
+            lambda c: c.update(ssh_key="/etc/wakeci/FILL-IN"),
+            lambda c: c["machines"][0].update(runner_prefixes="host1-"),
         ):
             cfg = copy.deepcopy(EXAMPLE)
             change(cfg)

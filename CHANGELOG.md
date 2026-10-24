@@ -6,6 +6,11 @@ change raises the minor number.
 
 ## [Unreleased]
 
+### Changed
+- `wakeci check` refuses a value that still holds `FILL-IN`, two machines with the same MAC
+  or host, and the same runner prefix on two machines. A prefix that starts another
+  machine's prefix (`host1` and `host10-`) is a warning: such a runner belongs to both.
+
 ## [0.4.0] - 2026-10-22
 
 The first release under the WakeCI name.

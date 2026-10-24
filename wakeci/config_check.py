@@ -14,6 +14,10 @@ The file is loaded the same way the controller loads it (``main.load_config`` an
 ``machines_from``). Unknown keys are refused, so a typo is not silently ignored. Token
 files are not read: on a fresh controller they do not exist yet.
 
+A value that still holds ``FILL-IN`` (what ``wakeci discover`` writes where only you know
+the answer, such as a machine's MAC and address) is refused, so a half-filled file is never
+deployed.
+
 The SSH key, ``known_hosts`` and every token file must sit directly in ``/etc/wakeci``: the
 installer changes owners and modes of these files as root, so it must never be pointed at a
 file elsewhere.
@@ -32,6 +36,7 @@ from . import actions, main
 from .notify import FORMATS
 
 CONFIG_VERSION = 1
+PLACEHOLDER = "FILL-IN"
 TOP_KEYS = {
     "$schema",
     "config_version",
@@ -80,12 +85,49 @@ def no_unknown_keys(where: str, obj, allowed: set) -> None:
         raise ValueError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
 
 
+def placeholder_in(value, where: str = "") -> "str | None":
+    """Where the first value still holding PLACEHOLDER is, in file order, or None."""
+    if isinstance(value, str):
+        return where if PLACEHOLDER in value else None
+    if isinstance(value, dict):
+        items = [(f"{where}.{k}" if where else str(k), v) for k, v in value.items()]
+    elif isinstance(value, list):
+        items = [(f"{where}[{i}]", v) for i, v in enumerate(value)]
+    else:
+        return None
+    for sub_where, sub in items:
+        found = placeholder_in(sub, sub_where)
+        if found:
+            return found
+    return None
+
+
+def check_overlaps(machines, warnings: "list[str]") -> None:
+    """A runner belongs to every machine one of whose prefixes it starts with (decide.py
+    ``Machine.owns``). The same prefix on two machines is an error; a prefix that starts
+    another machine's prefix (``host1`` and ``host10-``) is a warning: it may be meant."""
+    for i, a in enumerate(machines):
+        for b in machines[i + 1 :]:
+            for p in sorted(set(a.runner_prefixes)):
+                for q in sorted(set(b.runner_prefixes)):
+                    if p == q:
+                        raise ValueError(f"machines {a.name} and {b.name} both have the runner prefix {p!r}")
+                    if q.startswith(p) or p.startswith(q):
+                        longer = max(p, q, key=len)
+                        warnings.append(
+                            f"a runner whose name starts with {longer!r} belongs to both {a.name} and {b.name}"
+                        )
+
+
 def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str]]:
     """The paths to prepare, or ValueError. Notes that are not errors go to ``warnings``."""
     warnings = [] if warnings is None else warnings
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     no_unknown_keys("the configuration", raw, TOP_KEYS)
+    left = placeholder_in(raw)
+    if left:
+        raise ValueError(f"{left} is still {PLACEHOLDER}: fill it in")
     if "config_version" not in raw:
         warnings.append(f'no config_version: read as version {CONFIG_VERSION}; add "config_version": {CONFIG_VERSION}')
     cfg = main.load_config(path)
@@ -165,6 +207,9 @@ def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str
         raise ValueError("machines must be a list")
     for i, m in enumerate(cfg["machines"]):
         no_unknown_keys(f"machines[{i}]", m, MACHINE_KEYS)
+        # A string would pass as a list of one-letter prefixes.
+        if not isinstance(m.get("runner_prefixes"), list):
+            raise ValueError(f"machines[{i}].runner_prefixes must be a list")
     machines = main.machines_from(cfg)
     if not machines:
         raise ValueError("machines must not be empty")
@@ -194,6 +239,13 @@ def check(path: str, warnings: "list[str] | None" = None) -> list[tuple[str, str
         if not re.fullmatch(r"[a-z_][a-z0-9_-]*", m.ssh_user):
             raise ValueError(f"machine {m.name}: ssh_user is not a valid user name")
         out.append(("host", m.host))
+    for what, key in (("MAC", lambda m: actions.magic_packet(m.mac)[6:12]), ("host", lambda m: m.host.lower())):
+        seen: dict = {}
+        for m in machines:
+            if key(m) in seen:
+                raise ValueError(f"machines {seen[key(m)]} and {m.name} have the same {what}")
+            seen[key(m)] = m.name
+    check_overlaps(machines, warnings)
     return out
 
 

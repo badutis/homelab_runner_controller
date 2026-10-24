@@ -242,6 +242,11 @@ A **machine** has:
   machine;
 - `rank`: lower ranks are woken first, so give faster machines a lower number.
 
+Every machine needs its own MAC and host, and no two machines may share a runner prefix.
+A prefix should end where the number ends (`host1-`, not `host1`): otherwise `host1`
+also matches the runners of `host10-`, which then belong to both machines, and
+`wakeci check` warns about it. A value that still holds `FILL-IN` is refused.
+
 ### Tokens
 
 Use one fine-grained personal access token per source, with read access only:
