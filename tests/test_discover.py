@@ -279,7 +279,7 @@ class CommandTest(unittest.TestCase):
     def test_write_follows_a_symbolic_link_and_keeps_mode_and_owner(self):
         real = os.path.join(self.dir.name, "real.json")
         os.replace(self.config, real)
-        os.chmod(real, 0o640)
+        os.chmod(real, 0o400)
         os.symlink(real, self.config)
         code, _, err = self.update("--write")
         self.assertEqual(code, 0, err)
@@ -287,7 +287,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(json.loads(Path(real).read_text())["machines"][1]["name"], "ci5")
         self.assertTrue(os.path.exists(real + ".bak"))
         st = os.stat(real)
-        self.assertEqual((stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid), (0o640, os.getuid(), os.getgid()))
+        self.assertEqual((stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid), (0o400, os.getuid(), os.getgid()))
 
     def test_a_file_without_a_final_newline_gives_a_clean_diff(self):
         Path(self.config).write_text(Path(self.config).read_text().rstrip("\n"))
